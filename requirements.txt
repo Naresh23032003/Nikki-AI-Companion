@@ -1,0 +1,19 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+pyyaml==6.0.2
+pydantic==2.10.4
+python-multipart==0.0.32
+chromadb==1.5.9
+apscheduler==3.11.3
+
+# Voice pipeline
+faster-whisper==1.2.1   # speech-to-text (Whisper small, int8, GPU/CPU)
+kokoro==0.9.4           # text-to-speech (Kokoro-82M, CPU)
+soundfile==0.14.0       # WAV encoding for TTS output
+av==18.0.0              # audio decoding (webm/opus) for STT
+# Note: kokoro needs espeak-ng installed on the system for phonemization.
+#   Windows: install espeak-ng (github.com/espeak-ng/espeak-ng/releases)
+#   macOS:   brew install espeak-ng
+#   Linux:   apt-get install espeak-ng
+# GPU STT also needs CUDA + cuDNN (via a CUDA-enabled PyTorch); CPU works without.

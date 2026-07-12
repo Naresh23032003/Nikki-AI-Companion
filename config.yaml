@@ -1,0 +1,179 @@
+# Configuration for the local AI companion backend.
+
+ollama:
+  # Base URL of your locally running Ollama server.
+  base_url: "http://localhost:11434"
+  # Chat model. Make sure it's pulled: `ollama pull llama3.2:3b`
+  # Swapped to the abliterated (uncensored) llama3.2 3B: same size/speed,
+  # but doesn't snap into assistant-mode refusals mid-roleplay the way the
+  # stock aligned model did (rollback: llama3.2:3b).
+  model: "huihui_ai/llama3.2-abliterate:3b"
+  # Embedding model for long-term memory: `ollama pull nomic-embed-text`
+  embed_model: "nomic-embed-text"
+  # Model for background memory/graph extraction (structured JSON). Same as
+  # `model` on purpose: qwen2.5:3b-instruct extracts JSON slightly better, but
+  # running chat+router+extractor+embed all resident together pushed the 6GB
+  # card to 5.9GB used with ~50MB free, which starved every concurrent Ollama
+  # call (502s / ReadTimeouts) whenever TTS also needed VRAM. qwen was also
+  # re-verified disqualified as the CHAT/ROUTER model regardless (hallucinates
+  # tool calls on pure mentions — tests/tool_calling_eval.py). One resident
+  # model keeps headroom for XTTS/RVC.
+  extract_model: "huihui_ai/llama3.2-abliterate:3b"
+  # Sampling options passed through to Ollama.
+  options:
+    temperature: 0.8
+    top_p: 0.9
+  # How long Ollama keeps models resident after a call. The 5m default meant
+  # every idle gap paid a full cold reload on the next message (>1s just for
+  # the embedding model — the "retrieve_memories SLOW" spikes). With ONE
+  # resident chat/extract model (~2.55GB) + nomic-embed (~0.32GB) there's
+  # comfortable headroom left in 6GB for TTS/RVC too.
+  keep_alive: "2h"
+
+persona:
+  # Which persona to load at startup. Must match a file name (without .yaml)
+  # in the personas/ folder.
+  active: "luna"
+  # Folder holding persona definition files.
+  folder: "personas"
+
+database:
+  # SQLite file storing all sessions and messages.
+  path: "companion.db"
+
+context:
+  # How many of the most recent messages to feed back into the model.
+  # (Long-term memory supplements this — see the `memory` section.)
+  max_messages: 20
+
+stt:
+  # faster-whisper model size. "small" balances accuracy vs. the 6GB VRAM budget.
+  model_size: "small"
+
+tts:
+  # Default Kokoro voice if a persona doesn't specify one. Warm female voices:
+  # af_heart, af_bella, af_nicole, af_sarah. Runs on CPU.
+  default_voice: "af_heart"
+  # Kokoro language pack: 'a' = American English, 'b' = British English.
+  lang_code: "a"
+  # Speaking pace. Slightly under 1.0 sounds more relaxed/human; raise toward
+  # 1.0 for a snappier delivery. Range ~0.8–1.2.
+  speed: 0.92
+
+memory:
+  # Persistent ChromaDB vector store location.
+  chroma_path: "chroma_db"
+  # ChromaDB collection name.
+  collection: "companion_memories"
+  # How many semantically-relevant memories to retrieve per turn.
+  top_k: 6
+  # Minimum cosine similarity for a semantic match to be injected. Higher =
+  # stricter (only clearly-relevant memories surface). ~0.3-0.45 is a good range.
+  retrieval_threshold: 0.35
+  # Also include this many most-recently-created memories (fresh context).
+  recent_count: 3
+  # Cosine-similarity threshold above which a new fact is treated as a
+  # duplicate of an existing one (and updates it instead of inserting).
+  dedup_threshold: 0.92
+
+# Her voice system (see docs/RVC_TRAINING.md + README "Voice").
+voice:
+  # Calls: kokoro_raw (stock voice) | kokoro_rvc (her timbre via RVC layer).
+  call_voice: "kokoro_rvc"        # her trained voice (rollback: kokoro_raw)
+  rvc_model_dir: "voices/rvc/nikki"
+  # Studio TTS engine for voice notes / rendered lines: xtts | chatterbox
+  studio_engine: "xtts"
+  studio_idle_unload_s: 300
+  # Minimum free VRAM (MB) required to load the studio engine on the GPU.
+  # XTTS-v2 needs ~3.4GB; loading it into a fuller card silently spills to
+  # shared system memory and stalls EVERYTHING on the GPU (Ollama chat
+  # included — measured: render RTF 24x, chat ReadTimeouts, she went silent).
+  # Below this headroom she falls back to Kokoro+RVC (still her voice).
+  studio_min_free_vram_mb: 3800
+  # Abandon a studio render after this many seconds (healthy = 10-30s) and
+  # fall back to Kokoro, so a stuck render can never hold a reply hostage.
+  studio_render_timeout_s: 90
+  # Rewrite voice-note text so it SOUNDS spoken (audio only; bubble unchanged).
+  speakable_rewrite: true
+  # Covers: semitone shift applied to converted vocals (into her range).
+  cover_pitch_semitones: 0
+  # Per-emotion Chatterbox presets can be overridden here:
+  # emotion_presets: { happy: { exaggeration: 0.75, cfg_weight: 0.4 } }
+
+# Two-brain architecture: Nikki (local) + a cloud "big brain" for complex work.
+brain:
+  cloud_enabled: true            # master switch — off = fully local
+  providers:                     # tried in order; keys live in .env
+    - name: groq
+      enabled: true
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-120b"
+      key_env: "GROQ_API_KEY"
+    - name: gemini
+      enabled: false
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+      model: "gemini-2.0-flash"
+      key_env: "GEMINI_API_KEY"
+    - name: cerebras
+      enabled: false
+      base_url: "https://api.cerebras.ai/v1"
+      model: "llama-3.3-70b"
+      key_env: "CEREBRAS_API_KEY"
+  # Free-tier budgets (Groq): stay under with headroom.
+  requests_per_day: 950
+  tokens_per_day: 190000
+  degrade_at: 0.8                # above 80% of budget, DEEP threshold rises
+  audit_log: "cloud_audit.jsonl" # every outbound cloud payload, for review
+
+router:
+  # Layer-1 deterministic rules (editable). Verbs that force DEEP routing:
+  deep_verbs: ["explain", "research", "compare", "decide", "analyze", "analyse",
+               "summarize", "summarise", "calculate", "solve", "debug", "prove",
+               "translate", "review", "plan out"]
+  length_threshold: 350          # chars; longer messages route DEEP
+  react_then_deliver_after_s: 20 # expected waits beyond this get a reaction first
+
+behavior:
+  eagerness: 0.2                 # 0-1: how often she OFFERS actions after a mention
+  offer_min_gap: 6               # min exchanges between offers
+  schedule_realism: true         # busy slots slow replies / defer naturally
+  quiet_hours: "01:00-07:30"     # she's 'asleep'
+
+# Passive daily mood journal: nightly local-only extraction of the user's
+# mood from that day's conversations (all sources). Never asks — only infers
+# from concrete evidence. See app/journal.py + README "Mood journal".
+journal:
+  enabled: true
+  # Nightly extraction is a one-off batch job, not a live user-facing reply,
+  # so latency doesn't matter — only quality does. llama3.2:3b (the main chat
+  # model) under-extracts nuance and risks inventing feelings on quiet days;
+  # llama3.1:8b (already pulled) follows the evidence rule far more reliably
+  # and correctly returns 0 entries on flat days. Ollama swaps models on
+  # demand the same way ollama.extract_model already does for
+  # qwen2.5:7b-instruct, so this costs nothing while she's otherwise idle.
+  extract_model: "llama3.1:8b"
+  nightly_time: "23:45"          # HH:MM local, when the day's extraction runs
+  weekly_pattern_day: "sun"      # day-of-week the pattern-awareness pass runs
+  weekly_pattern_time: "23:55"   # HH:MM local
+  # Google Sheets sync is intentionally NOT implemented yet — SQLite
+  # (mood_journal table) is the only store for now.
+
+tools:
+  vision:
+    # Local Ollama vision model for captioning incoming WhatsApp photos
+    # (`ollama pull moondream`, ~1.7GB). If not pulled, she honestly says she
+    # can't see pics yet instead of guessing — never a silent failure.
+    model: "moondream"
+
+whatsapp:
+  # URL of the Node whatsapp-bridge service (see whatsapp-bridge/README.md).
+  bridge_url: "http://localhost:3001"
+  # Fraction of WhatsApp replies sent as Kokoro voice notes instead of text.
+  voice_reply_ratio: 0.15
+  # Session id used for WhatsApp + proactive messages. "main" is shared with
+  # the web app so both surfaces show one continuous history.
+  session_id: "main"
+
+server:
+  host: "0.0.0.0"
+  port: 8000

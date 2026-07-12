@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Memory Graph</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #eee; }
+      #wrap { display: flex; height: 100vh; }
+      #graph { flex: 1; }
+      #panel { width: 320px; padding: 16px; background: #1a1a1a; border-left: 1px solid #333; overflow: auto; }
+      button, input, select, textarea { width: 100%; margin-top: 6px; padding: 8px; }
+      .row { margin-bottom: 10px; }
+      .muted { color: #aaa; font-size: 12px; }
+      .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 6px; background: #333; border-radius: 999px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <div id="graph"></div>
+      <div id="panel">
+        <h3>Memory Graph</h3>
+        <div class="muted">Click a node to inspect its relations and linked memories.</div>
+        <div id="details" class="row"></div>
+        <div class="row">
+          <h4>Edit selected entity</h4>
+          <input id="entityName" placeholder="Name" />
+          <select id="entityType">
+            <option value="person">person</option>
+            <option value="place">place</option>
+            <option value="thing">thing</option>
+            <option value="event">event</option>
+            <option value="pet">pet</option>
+            <option value="org">org</option>
+          </select>
+          <textarea id="entityNotes" rows="4" placeholder="Notes"></textarea>
+          <button onclick="saveEntity()">Save entity</button>
+          <button onclick="deleteEntity()">Delete entity</button>
+        </div>
+        <div class="row">
+          <h4>Delete selected relation</h4>
+          <button onclick="deleteRelation()">Delete relation</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      let network;
+      let nodes = new vis.DataSet();
+      let edges = new vis.DataSet();
+      let selectedEntityId = null;
+      let selectedRelationId = null;
+
+      function buildGraph(data) {
+        const entityNodes = data.entities.map((entity) => ({
+          id: entity.id,
+          label: entity.label,
+          title: `${entity.label}\n${entity.notes || ''}`,
+          color: {
+            background: entity.type === 'person' ? '#5b8cff' : '#2e7d32',
+            border: '#fff'
+          },
+          font: { color: '#fff' }
+        }));
+        const relationEdges = data.relations.map((relation) => ({
+          id: relation.id,
+          from: relation.from,
+          to: relation.to,
+          label: relation.label,
+          arrows: 'to',
+          font: { align: 'middle', color: '#ddd' },
+          color: { color: '#aaa', highlight: '#fff' }
+        }));
+        nodes.clear();
+        edges.clear();
+        nodes.add(entityNodes);
+        edges.add(relationEdges);
+        const container = document.getElementById('graph');
+        const options = {
+          physics: { stabilization: true },
+          interaction: { hover: true, tooltipDelay: 100 },
+          layout: { improvedLayout: true }
+        };
+        if (!network) {
+          network = new vis.Network(container, { nodes, edges }, options);
+        } else {
+          network.setData({ nodes, edges });
+          network.redraw();
+        }
+        network.on('click', (params) => {
+          if (params.nodes.length) {
+            selectedEntityId = params.nodes[0];
+            selectedRelationId = null;
+            const entity = data.entities.find((e) => e.id === selectedEntityId);
+            if (!entity) return;
+            document.getElementById('entityName').value = entity.label || '';
+            document.getElementById('entityType').value = entity.type || 'thing';
+            document.getElementById('entityNotes').value = entity.notes || '';
+            renderDetails(entity);
+          } else if (params.edges.length) {
+            selectedRelationId = params.edges[0];
+            selectedEntityId = null;
+            document.getElementById('details').innerHTML = `<div class="muted">Selected relation ID: ${selectedRelationId}</div>`;
+          }
+        });
+      }
+
+      function renderDetails(entity) {
+        const chips = (entity.linked_memories || []).map((m) => `<span class="chip">${m.fact}</span>`).join('');
+        document.getElementById('details').innerHTML = `
+          <strong>${entity.label}</strong><br/>
+          <div class="muted">${entity.type || 'thing'}</div>
+          <div class="muted">${entity.notes || 'No notes yet.'}</div>
+          <div style="margin-top:8px"><strong>Linked memories</strong></div>
+          <div>${chips || '<div class="muted">None</div>'}</div>
+        `;
+      }
+
+      async function saveEntity() {
+        if (!selectedEntityId) return;
+        const payload = {
+          name: document.getElementById('entityName').value,
+          type: document.getElementById('entityType').value,
+          notes: document.getElementById('entityNotes').value
+        };
+        const res = await fetch(`/memory-graph/entities/${selectedEntityId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (res.ok) {
+          loadGraph();
+        }
+      }
+
+      async function deleteEntity() {
+        if (!selectedEntityId) return;
+        if (!confirm('Delete this entity and its relations?')) return;
+        const res = await fetch(`/memory-graph/entities/${selectedEntityId}`, { method: 'DELETE' });
+        if (res.ok) {
+          loadGraph();
+        }
+      }
+
+      async function deleteRelation() {
+        if (!selectedRelationId) return;
+        const res = await fetch(`/memory-graph/relations/${selectedRelationId}`, { method: 'DELETE' });
+        if (res.ok) {
+          loadGraph();
+        }
+      }
+
+      async function loadGraph() {
+        const res = await fetch('/memory-graph/data');
+        const data = await res.json();
+        buildGraph(data);
+      }
+
+      loadGraph();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,50 @@
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---- Secrets ----
+.env
+cloud_audit.jsonl
+config/latency.json
+
+# ---- Runtime data (regenerated on startup) ----
+companion.db
+companion.db-shm
+companion.db-wal
+chroma_db/
+
+# ---- Logs & backups ----
+*.log
+companion.log*
+backups/
+
+# ---- Personal voice data (never publish: recordings, datasets, trained models) ----
+voice_tracks/
+rvc_dataset/
+voices/
+songs/
+applio/
+
+# ---- Generated media ----
+media/tts/
+media/bench/
+media/avatars/*_upload*
+
+# ---- Node / frontend ----
+node_modules/
+frontend/dist/
+# VAD assets copied from node_modules at build time (see frontend prebuild script)
+frontend/public/vad/
+
+# ---- WhatsApp bridge session (contains a logged-in WhatsApp session) ----
+whatsapp-bridge/.wwebjs_auth/
+whatsapp-bridge/.wwebjs_cache/
+
+# ---- Editor / assistant / OS ----
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

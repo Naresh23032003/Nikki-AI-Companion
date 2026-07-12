@@ -1,0 +1,17 @@
+# Voice system extras.
+# Base torch 2.12+cu126, torchaudio, torchcodec, demucs: already installed.
+
+# PART 3 — studio TTS (XTTS-v2, installed via:)
+#   pip install coqui-tts
+#   pip install torchaudio  (matching your installed torch build/version)
+#   pip install torchcodec==0.14.0
+#   pip install "transformers==4.56.2"  # coqui-tts 0.27.5 pulls transformers
+#     5.x by default, which removed `isin_mps_friendly` that XTTS imports —
+#     pin to 4.56.2 or it fails at import time, not at call time.
+coqui-tts
+
+# PART 2/4/5 — RVC inference: rvc-python is BROKEN on Python 3.12 (fairseq/
+# distutils). Instead, RVC runs as a warm worker inside the Applio env:
+#   applio/env/Scripts/python.exe tools/rvc_server.py     (port 3002)
+# Training is fully headless too:
+#   applio/env/Scripts/python.exe tools/train_rvc_headless.py
