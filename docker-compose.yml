@@ -5,7 +5,7 @@
 #
 # First start downloads the models (~2 GB) into the `ollama-models` volume;
 # later starts are fast. This is the LITE tier (text chat + memory). Voice,
-# calls, and WhatsApp are a full local install — see the README.
+# calls, and WhatsApp are a full local install, see the README.
 services:
   ollama:
     image: ollama/ollama:latest

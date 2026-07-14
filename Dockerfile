@@ -20,7 +20,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Core deps only — the lazy-imported voice/ML libs are intentionally absent,
+# Core deps only. The lazy-imported voice/ML libs are intentionally absent,
 # so /stt, /tts and /ws/call report "voice unavailable" and everything else
 # (streaming chat, memory, personas, proactive, journal) runs.
 COPY requirements.txt ./

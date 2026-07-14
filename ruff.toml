@@ -5,5 +5,5 @@ target-version = "py312"
 
 [lint]
 # E741: "ambiguous variable name" (single-letter l/I/O). Stylistic only, and
-# present intentionally in a few tight numeric loops — keep it off.
+# present intentionally in a few tight numeric loops, so keep it off.
 ignore = ["E741"]
