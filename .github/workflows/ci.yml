@@ -8,7 +8,7 @@ on:
 
 jobs:
   backend:
-    name: Backend — lint + evals
+    name: Backend - lint and evals
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,14 +27,14 @@ jobs:
       - name: Lint (ruff)
         run: ruff check app tests
 
-      - name: Boot check — app imports with no voice/ML libs installed
+      - name: Boot check - app imports with no voice/ML libs installed
         run: python -c "import app.main; print('lite boot OK')"
 
       - name: Deterministic evals (routing, guards, temporal memory, journal)
         run: python tests/run_evals.py
 
   frontend:
-    name: Frontend — build
+    name: Frontend - build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +49,7 @@ jobs:
         working-directory: frontend
 
   docker:
-    name: Docker — lite image builds
+    name: Docker - lite image builds
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

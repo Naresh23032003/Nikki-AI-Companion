@@ -21,7 +21,7 @@ frontend/dist/
 frontend/public/vad/
 whatsapp-bridge/
 
-# Heavy personal voice data — never part of the lite image
+# Heavy personal voice data, never part of the lite image
 voice_tracks/
 rvc_dataset/
 voices/

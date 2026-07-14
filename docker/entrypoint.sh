@@ -16,7 +16,7 @@ echo "companion: Ollama is up."
 pull() {
   echo "companion: ensuring model '$1' (first run downloads it) ..."
   curl -sf "$OLLAMA/api/pull" -d "{\"name\":\"$1\"}" >/dev/null || {
-    echo "companion: WARNING could not pull '$1' — chat/memory may be limited."
+    echo "companion: WARNING could not pull '$1', chat/memory may be limited."
   }
 }
 pull "$CHAT_MODEL"
