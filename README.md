@@ -22,13 +22,14 @@ faster-whisper · Kokoro TTS · RVC · XTTS-v2 · whatsapp-web.js
 ### 90-second demo
 
 <p align="center">
-  <video src="https://github.com/Naresh23032003/Nikki-AI-Companion/raw/main/docs/demo.mp4" width="320" controls muted>
-    Your browser does not render inline video. Watch it directly: <a href="docs/demo.mp4">docs/demo.mp4</a>.
-  </video>
+  <a href="docs/demo.mp4">
+    <img src="docs/screenshot.png" alt="Nikki demo video, click to watch" width="320">
+  </a>
+  <br>
+  <a href="docs/demo.mp4"><b>Watch the 90-second demo</b></a>
 </p>
 
-Player not loading? Watch it directly at [docs/demo.mp4](docs/demo.mp4). It
-covers chat, memory, calls, relationship progression, and the mood journal end
+Covers chat, memory, calls, relationship progression, and the mood journal end
 to end.
 
 ---
