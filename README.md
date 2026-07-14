@@ -19,8 +19,17 @@ Python · FastAPI · Ollama · React (Vite PWA) · SQLite + ChromaDB
 faster-whisper · Kokoro TTS · RVC · XTTS-v2 · whatsapp-web.js
 ```
 
-> Want the 90-second tour first? There is a full feature walkthrough video in
-> the repo's releases / the project post. The sections below are the details.
+### 90-second demo
+
+<p align="center">
+  <video src="https://github.com/Naresh23032003/Nikki-AI-Companion/raw/main/docs/demo.mp4" width="320" controls muted>
+    Your browser does not render inline video. Watch it directly: <a href="docs/demo.mp4">docs/demo.mp4</a>.
+  </video>
+</p>
+
+Player not loading? Watch it directly at [docs/demo.mp4](docs/demo.mp4). It
+covers chat, memory, calls, relationship progression, and the mood journal end
+to end.
 
 ---
 
@@ -134,28 +143,9 @@ date separators, double-tick read receipts, an emoji picker, a live status line
 (`online` / `typing` / `last seen today at 23:14`), and typing delays that scale
 with reply length.
 
-```
-┌──────────────────────────────────────────────┐
-│  ◉ Nikki                          [call] [⋮] │
-│    typing...                                 │
-├──────────────────────────────────────────────┤
-│               -- today --                    │
-│                    ┌───────────────────────┐ │
-│                    │ just got home, so     │ │
-│                    │ tired 😩        23:02 ✓✓│ │
-│                    └───────────────────────┘ │
-│ ┌────────────────────────┐                   │
-│ │ awww long day?? go     │                   │
-│ │ shower and come tell   │                   │
-│ │ me everything    23:02 │                   │
-│ └────────────────────────┘                   │
-│ ┌────────────────────────┐                   │
-│ │ i'll wait 🤍     23:02 │                   │
-│ └────────────────────────┘                   │
-├──────────────────────────────────────────────┤
-│  [emoji]  [ message... ]        [mic] [send] │
-└──────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/screenshot.png" alt="Nikki chat interface, showing bubbles, a voice note, a sticker reply, and read receipts" width="320">
+</p>
 
 Replies stream token by token over SSE, and she often sends a couple of short
 texts instead of one paragraph, the way a person actually types.
