@@ -34,7 +34,7 @@ def run(stage: str, *args: str, postcondition=None) -> None:
               flush=True)
         raise SystemExit(proc.returncode)
     if postcondition is not None and not postcondition():
-        print(f"STAGE {stage} FAILED (postcondition not met — Applio soft-fail) "
+        print(f"STAGE {stage} FAILED (postcondition not met - Applio soft-fail) "
               f"after {mins:.1f}min", flush=True)
         raise SystemExit(3)
     print(f"STAGE {stage} OK ({mins:.1f}min)", flush=True)
@@ -48,7 +48,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if not DATASET.exists() or not any(DATASET.glob("*.wav")):
-        print("rvc_dataset/ is empty — run tools/prepare_rvc_dataset.py first")
+        print("rvc_dataset/ is empty - run tools/prepare_rvc_dataset.py first")
         return 1
 
     logs = APPLIO / "logs" / MODEL

@@ -27,7 +27,7 @@ async function urlExists(url) {
   try {
     const res = await fetch(url, { method: 'HEAD' })
     const type = res.headers.get('content-type') || ''
-    // The SPA catch-all returns index.html (200) for missing files — require a
+    // The SPA catch-all returns index.html (200) for missing files - require a
     // video content-type so we don't mistake the fallback page for a clip.
     return res.ok && !type.includes('text/html')
   } catch {
@@ -194,7 +194,7 @@ export default function AnimatedAvatar({ persona, emotion, speaking, getViseme, 
 // Two low-res video loops cross-faded in real time: idle.mp4 plays when quiet,
 // talking.mp4 while she speaks. Cheap (plain <video> decode), works on modest
 // hardware, and looks far more lifelike than the sprite. Clips are generated
-// offline once — see frontend/public/avatars/README.md.
+// offline once - see frontend/public/avatars/README.md.
 function VideoAvatar({ avatarId, speaking }) {
   const idleRef = useRef(null)
   const talkRef = useRef(null)

@@ -1,4 +1,4 @@
-"""Warm RVC inference worker — runs INSIDE the Applio env, serves the app.
+"""Warm RVC inference worker - runs INSIDE the Applio env, serves the app.
 
     applio/env/Scripts/python.exe tools/rvc_server.py   (port 3002)
 
@@ -38,7 +38,7 @@ def _patch_rvc_hot_paths() -> None:
     one-time CUDA kernel-selection warmup) on EVERY conversion, then discards
     it, and separately re-reads + reconstructs the whole FAISS index from disk
     every call too. Measured on this machine: ~0.7-1.1s RMVPE reload + ~0.1-0.4s
-    warmup + ~0.14s FAISS reload — nearly all of the ~2s per-chunk latency,
+    warmup + ~0.14s FAISS reload - nearly all of the ~2s per-chunk latency,
     since a WARM RMVPE instance answers in ~40-100ms and a cached index is
     free. This patches only OUR worker process (not Applio's vendored files),
     so `git pull`-ing Applio later doesn't conflict with it.
@@ -51,7 +51,7 @@ def _patch_rvc_hot_paths() -> None:
 
     # RMVPE: one instance per (device, model_name, sample_rate, hop_size).
     # No __del__ on this class, so the pipeline's `del model` after each use
-    # is just a refcount decrement — the cached instance survives untouched.
+    # is just a refcount decrement - the cached instance survives untouched.
     rmvpe_cache: dict = {}
     rmvpe_ready: set = set()
     orig_new = RMVPE.__new__
@@ -68,7 +68,7 @@ def _patch_rvc_hot_paths() -> None:
     def cached_init(self, device, model_name="rmvpe.pt", sample_rate=16000, hop_size=160):
         key = (device, model_name, sample_rate, hop_size)
         if key in rmvpe_ready:
-            return  # already loaded on GPU — skip the expensive reload
+            return  # already loaded on GPU - skip the expensive reload
         orig_init(self, device, model_name, sample_rate, hop_size)
         rmvpe_ready.add(key)
         logger.info("RMVPE loaded and cached for %s", key)
@@ -128,7 +128,7 @@ async def _warmup() -> None:
     per-shape kernel-selection cost mid-conversation."""
     pth, idx = _model_files()
     if not (pth and idx):
-        logger.warning("no model found in %s — skipping warmup", MODEL_DIR)
+        logger.warning("no model found in %s - skipping warmup", MODEL_DIR)
         return
     import numpy as np
     import soundfile as sf
@@ -141,12 +141,12 @@ async def _warmup() -> None:
         vc.convert_audio(audio_input_path=str(clip), audio_output_path=str(out),
                          model_path=str(pth), index_path=str(idx), f0_method="rmvpe")
         logger.info("warmup %.1fs chunk: %.0fms", secs, (time.perf_counter() - t0) * 1000)
-    logger.info("worker ready — common chunk lengths primed")
+    logger.info("worker ready - common chunk lengths primed")
 
 
 @app.post("/convert")
 async def convert(request: Request, pitch: int = 0):
-    """Raw WAV bytes in, raw WAV bytes out — no multipart parsing, no
+    """Raw WAV bytes in, raw WAV bytes out - no multipart parsing, no
     FileResponse disk-streaming. This is an internal, single-caller worker
     (the app's RVC layer), so skipping both saves ~500-900ms per call that
     had nothing to do with the actual GPU conversion (measured: multipart
@@ -173,7 +173,7 @@ async def convert(request: Request, pitch: int = 0):
     )
     ms = (time.perf_counter() - t0) * 1000
     # The RVC model's own sample rate (e.g. 40k/48k) almost never matches the
-    # caller's input rate (Kokoro's 24k) — resample back here, INSIDE the
+    # caller's input rate (Kokoro's 24k) - resample back here, INSIDE the
     # Applio env where librosa/scipy are already guaranteed present, rather
     # than requiring the lean main-app venv to carry a version-pinned
     # torch/torchaudio just for this one incidental step.

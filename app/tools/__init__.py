@@ -1,6 +1,6 @@
 """Tool-calling framework: she can take real actions via Ollama NATIVE
 function calling (the model itself picks the tool + extracts args in one
-round trip — no regex tool-matching, no separate arg-extraction call).
+round trip - no regex tool-matching, no separate arg-extraction call).
 
 Each tool is one file in this package exporting a single `TOOL = Tool(...)`.
 Flow: model requests tool -> execute() -> result fed back -> she phrases the
@@ -8,7 +8,7 @@ result in-character (main.py). Raw tool JSON never reaches the user; every
 call is logged (tool_call_log table).
 
 Model choice: llama3.2:3b was empirically tested against qwen2.5:3b-instruct
-for tool SELECTION specifically (tests/tool_calling_eval.py) — llama3.2:3b
+for tool SELECTION specifically (tests/tool_calling_eval.py) - llama3.2:3b
 scored 100% with zero false-positive tool calls on mentions ("i'm hungry"),
 while qwen2.5:3b-instruct deterministically hallucinated a weather() call on
 a pure mention ("it's so hot today i'm melting" -> weather(city="AnyCity")).
@@ -43,7 +43,7 @@ class Tool:
     name: str
     description: str
     # JSON-schema "properties" dict, Ollama/OpenAI function-calling style.
-    # Keep flat + 1-2 args max — the local 3B model is unreliable with nesting.
+    # Keep flat + 1-2 args max - the local 3B model is unreliable with nesting.
     parameters: Dict[str, Dict[str, Any]]
     required: List[str]
     execute: Callable[[Dict[str, Any], ToolContext], Awaitable[Dict[str, Any]]]
@@ -85,7 +85,7 @@ def get_tool(name: str) -> Optional[Tool]:
 
 
 def _coerce(value: Any, schema: Dict[str, Any]) -> Any:
-    """Small models sometimes emit '250' for a number param — tolerate it."""
+    """Small models sometimes emit '250' for a number param - tolerate it."""
     want = schema.get("type")
     if want == "number" and not isinstance(value, (int, float)):
         try:
@@ -102,7 +102,7 @@ def _coerce(value: Any, schema: Dict[str, Any]) -> Any:
 
 class ToolRunner:
     """Executes a tool call and logs it. Tool SELECTION happens in the router
-    (native function calling); this class just runs whatever was decided —
+    (native function calling); this class just runs whatever was decided -
     used identically by chat, WhatsApp, and the proactive scheduler."""
 
     def __init__(self, ctx: ToolContext):

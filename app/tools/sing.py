@@ -8,7 +8,7 @@ from app.tools import Tool, ToolContext
 
 
 # A library entry whose title is still just its raw export filename (never
-# manually retitled — see app/covers.py's "(edit moods in the .json)" note)
+# manually retitled - see app/covers.py's "(edit moods in the .json)" note)
 # reads as broken if repeated verbatim ("wanna give sing_05_39s_vocals a
 # listen?"). Detect that and let her tease it without naming it instead.
 _AUTO_TITLE = re.compile(r"^[\w\-]*_vocals$", re.I)
@@ -31,16 +31,16 @@ async def execute(args: dict, ctx: ToolContext) -> dict:
         title = song.get("title", "")
         if _AUTO_TITLE.match(title):
             return {"ok": True, "song": song,
-                    "result": "you have a song ready to send — it hasn't been given a "
+                    "result": "you have a song ready to send - it hasn't been given a "
                               "proper title yet, so tease that you found one without "
                               "naming it, then send it"}
         return {"ok": True, "song": song,
-                "result": f"you have the song '{title}' ready — send it to them now"}
+                "result": f"you have the song '{title}' ready - send it to them now"}
     if query:
         return {"ok": False, "queue_query": query,
-                "result": f"'{query}' isn't in your library — tell them you'll send it "
+                "result": f"'{query}' isn't in your library - tell them you'll send it "
                           f"in a bit (never claim you can sing live), it's being prepared"}
-    return {"ok": False, "result": "no songs in your library yet — be honest and "
+    return {"ok": False, "result": "no songs in your library yet - be honest and "
                                    "playful about owing them one"}
 
 

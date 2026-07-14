@@ -91,7 +91,7 @@ async def execute(args: dict, ctx: ToolContext) -> dict:
     # action == "set" (default)
     due = parse_when(when_text) or parse_when(text)
     if due is None:
-        return {"ok": False, "result": "could not understand the time — ask them when exactly"}
+        return {"ok": False, "result": "could not understand the time - ask them when exactly"}
     if not text:
         text = "the thing they asked about"
     recurrence = parse_recurrence(when_text) or parse_recurrence(text)

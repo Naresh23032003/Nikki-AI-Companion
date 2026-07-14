@@ -1,7 +1,7 @@
 """Ollama client: streaming chat, one-shot chat, and embeddings.
 
 - stream_chat: token-by-token generation for the /chat endpoint (/api/chat).
-- chat:        one-shot completion, optionally JSON-constrained — used by the
+- chat:        one-shot completion, optionally JSON-constrained - used by the
                memory fact-extractor.
 - embed:       vector for a piece of text via the embedding model
                (/api/embeddings), used by the long-term memory store.
@@ -31,14 +31,14 @@ class OllamaClient:
         self.model = model
         self.embed_model = embed_model
         self.options = options or {}
-        # Ollama evicts models after 5 minutes by default — the first message
+        # Ollama evicts models after 5 minutes by default - the first message
         # after any idle gap then pays a full cold reload (measured >1s for
         # nomic-embed alone, dwarfing the actual work). Pin both chat and
         # embed models resident instead; they fit the VRAM budget together.
         self.keep_alive = keep_alive
         # httpx drops idle keep-alive connections after 5s by default, so any
         # pause in conversation forced a fresh TCP connect on the next message
-        # — measured at ~900ms on Windows loopback, most of the "SLOW"
+        # - measured at ~900ms on Windows loopback, most of the "SLOW"
         # retrieve_memories time. Keep pooled connections for an hour instead.
         self._client = httpx.AsyncClient(
             timeout=timeout,
@@ -96,11 +96,11 @@ class OllamaClient:
 
         Pass format="json" to constrain the model to emit valid JSON, and
         `model` to override the default (e.g. the dedicated extraction model).
-        `timeout` overrides the client default (120s) — offline batch jobs
+        `timeout` overrides the client default (120s) - offline batch jobs
         like the nightly journal push a whole day's transcript through a
         bigger model (with a model swap first) and can legitimately run
         longer than any live reply ever should.
-        `keep_alive` overrides the client default residency — pass 0 for a
+        `keep_alive` overrides the client default residency - pass 0 for a
         one-off model (nightly journal's 8B) so it unloads immediately
         instead of squatting in VRAM for hours and starving TTS/RVC.
         """
@@ -114,7 +114,7 @@ class OllamaClient:
         if format:
             payload["format"] = format
 
-        # NB: request timeout=None means "no timeout" in httpx — the client
+        # NB: request timeout=None means "no timeout" in httpx - the client
         # default only applies when the argument is left as the sentinel.
         resp = await self._client.post(
             f"{self.base_url}/api/chat", json=payload,

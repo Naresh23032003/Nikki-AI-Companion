@@ -79,7 +79,7 @@ class Database:
                     ON messages(session_id, id);
 
                 -- messages_between() (nightly mood-journal extraction) scans
-                -- by timestamp across ALL sessions — table scan without this.
+                -- by timestamp across ALL sessions - table scan without this.
                 CREATE INDEX IF NOT EXISTS idx_messages_timestamp
                     ON messages(timestamp);
 
@@ -333,7 +333,7 @@ class Database:
         now = datetime.now(timezone.utc)
         if kind == "event" and not event_datetime:
             text = fact.lower()
-            # "at 12" means 12:00 in the USER's local timezone — resolve locally,
+            # "at 12" means 12:00 in the USER's local timezone - resolve locally,
             # store as UTC (previously this made "at 12" mean 12:00 UTC).
             now_local = datetime.now().astimezone()
             m = re.search(r"\b(at|@)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", text)
@@ -601,7 +601,7 @@ class Database:
 
     def messages_between(self, start_iso: str, end_iso: str) -> List[Dict]:
         """All real (non-event) messages across every session/source in a UTC
-        timestamp range — used by the nightly mood-journal extraction, which
+        timestamp range - used by the nightly mood-journal extraction, which
         needs the whole day's conversation regardless of which surface
         (web/call/WhatsApp/tablet) it happened on."""
         with self._lock:
@@ -696,7 +696,7 @@ class Database:
             self._conn.commit()
 
     def complete_memory(self, memory_id: int) -> bool:
-        """Mark an event/transient memory as done — it stops being injected.
+        """Mark an event/transient memory as done - it stops being injected.
 
         Uses an epoch valid_until sentinel, which _memory_is_current treats as
         'completed' regardless of whether the event date is past or future.
@@ -737,7 +737,7 @@ class Database:
 
     def list_memories_by_category(self, category: str) -> List[Dict]:
         """Memories filtered at the SQL level (vs. list_memories() + a Python
-        filter) — used by the pattern-note hot path, which runs on every
+        filter) - used by the pattern-note hot path, which runs on every
         message but usually returns nothing (eagerness-gated)."""
         with self._lock:
             rows = self._conn.execute(
@@ -848,7 +848,7 @@ class Database:
 
     def cancel_reminder_like(self, text_like: str) -> Dict | None:
         """Cancel the most relevant pending reminder matching `text_like`
-        (fuzzy substring match — the model can't track numeric IDs reliably)."""
+        (fuzzy substring match - the model can't track numeric IDs reliably)."""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM reminders WHERE delivered = 0 AND cancelled = 0"
@@ -1036,7 +1036,7 @@ class Database:
             self._conn.commit()
 
     def mark_event_resolved_by_memory(self, memory_id: int) -> None:
-        """An event was manually marked complete elsewhere (e.g. Settings ✓) —
+        """An event was manually marked complete elsewhere (e.g. Settings ✓) -
         stop any pending encouragement/follow-up for it too."""
         with self._lock:
             self._conn.execute(
@@ -1066,7 +1066,7 @@ class Database:
         return dict(row) if row else None
 
     # ------------------------------------------------------------------
-    # Mood journal (passive, local-model-only extraction — see app/journal.py)
+    # Mood journal (passive, local-model-only extraction - see app/journal.py)
     # ------------------------------------------------------------------
     def add_mood_entry(self, date: str, time: str | None, mood_label: str,
                        intensity: int, why: str, source_channel: str | None) -> int:
@@ -1139,7 +1139,7 @@ class Database:
 
     def backup_to(self, dest_path: Path) -> None:
         """Consistent online snapshot via SQLite's backup API (safe while the
-        app is writing — unlike copying the file, which can catch a torn page)."""
+        app is writing - unlike copying the file, which can catch a torn page)."""
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             dest = sqlite3.connect(str(dest_path))

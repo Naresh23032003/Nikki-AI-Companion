@@ -1,7 +1,7 @@
 """RVC conversion layer: any audio -> her timbre.
 
 Talks to the warm RVC worker (tools/rvc_server.py, running in the Applio env
-on 127.0.0.1:3002) — rvc-python is broken on Python 3.12, and the worker keeps
+on 127.0.0.1:3002) - rvc-python is broken on Python 3.12, and the worker keeps
 the model loaded so per-chunk call latency stays low. If the worker or model
 is missing, everything degrades to the raw voice.
 """
@@ -28,7 +28,7 @@ class RVCConverter:
         self._worker_ok_at: float = 0.0
         # ONE persistent client (keep-alive connection), reused across every
         # call. A fresh httpx.get/post() call opens a NEW TCP connection each
-        # time — measured at ~550-570ms of pure connection-establishment
+        # time - measured at ~550-570ms of pure connection-establishment
         # overhead on Windows loopback, dwarfing the ~250ms of actual GPU
         # work. httpx.Client's connection pool is safe to share across
         # threads, which matters since .convert() runs via asyncio.to_thread.
@@ -56,7 +56,7 @@ class RVCConverter:
         return False
 
     def status_label(self) -> str:
-        """Human-readable reason for logging — `available` collapses "model
+        """Human-readable reason for logging - `available` collapses "model
         never trained" and "worker just isn't up yet" into one False, which
         misleadingly reads as a lost/corrupted model on every startup where
         the worker (a separate process) hasn't opened its port yet."""
@@ -90,10 +90,10 @@ class RVCConverter:
             out = out.mean(axis=1)
         if out_sr != sample_rate:
             # The worker (tools/rvc_server.py) resamples back to the input
-            # rate itself before responding — this is a defensive fallback
+            # rate itself before responding - this is a defensive fallback
             # only, not the normal path. Avoid a torch/torchaudio dependency
             # in this lean venv for what should never actually trigger.
-            logger.warning("rvc worker returned %dHz, expected %dHz — resampling crudely",
+            logger.warning("rvc worker returned %dHz, expected %dHz - resampling crudely",
                           out_sr, sample_rate)
             duration = len(out) / out_sr
             target_len = int(round(duration * sample_rate))

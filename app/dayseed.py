@@ -98,7 +98,7 @@ class DayLife:
             state = json.loads(raw)
             assert isinstance(state, dict) and state.get("slots")
         except Exception as e:  # noqa: BLE001
-            logger.warning("day seed generation failed (%s) — using fallback", e)
+            logger.warning("day seed generation failed (%s) - using fallback", e)
             state = self._fallback(weekday, recurring)
         state.setdefault("mood", "content")
         if state["mood"] not in MOODS:
@@ -116,7 +116,7 @@ class DayLife:
             "mood": random.choice(["content", "lazy", "playful"]),
             "energy": random.randint(2, 4),
             "slots": {"morning": "slow start with iced coffee and journaling",
-                      "afternoon": f"work stuff — {recurring}",
+                      "afternoon": f"work stuff - {recurring}",
                       "evening": "unwinding with a comfort show"},
             "on_mind": "the campaign deadline creeping closer",
             "thread_update": None, "random_event": None,
@@ -141,7 +141,7 @@ class DayLife:
         doing = (s.get("slots") or {}).get(slot, "just at home")
         mood = self._drifted_mood(s)
         lines = [
-            f"YOUR DAY (private context — reference naturally, never dump it): "
+            f"YOUR DAY (private context - reference naturally, never dump it): "
             f"mood {mood}, energy {s.get('energy', 3)}/5. Right now ({slot}) "
             f"you're {doing}. On your mind: {s.get('on_mind', 'nothing much')}.",
         ]

@@ -1,0 +1,5 @@
+# Shell scripts and the Docker entrypoint must stay LF, or they break inside
+# the Linux container when cloned on Windows.
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+Dockerfile text eol=lf

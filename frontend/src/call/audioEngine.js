@@ -3,7 +3,7 @@
 // Why Web Audio (not <audio>/setTimeout): lip-sync must be sampled against the
 // real playback clock. We schedule each chunk on an AudioContext and expose the
 // currently-active viseme via `currentViseme()`, computed from
-// AudioContext.currentTime — never setTimeout.
+// AudioContext.currentTime - never setTimeout.
 
 import { buildVisemeTimeline, makeVisemeCursor } from './lipsync.js'
 

@@ -188,7 +188,7 @@ export default function SettingsPanel({ persona, onClose, onPersonaChange, onCle
                   style={{ width: `${Math.min(100, relationship.affection)}%` }}
                 />
               </div>
-              <div className="hint">Affection {Math.round(relationship.affection)}/100 — grows slowly with real conversations.</div>
+              <div className="hint">Affection {Math.round(relationship.affection)}/100 - grows slowly with real conversations.</div>
 
               <details className="dev-tools">
                 <summary className="hint">dev override (testing only)</summary>
@@ -297,7 +297,7 @@ export default function SettingsPanel({ persona, onClose, onPersonaChange, onCle
               <h3>Brain</h3>
               <div className="hint">
                 Cloud: {brain.cloud_enabled ? 'on' : 'off'}
-                {brain.usage?.degraded && ' · degraded (budget) — casual stays local'}
+                {brain.usage?.degraded && ' · degraded (budget) - casual stays local'}
               </div>
               {brain.usage && (
                 <>
@@ -360,7 +360,7 @@ export default function SettingsPanel({ persona, onClose, onPersonaChange, onCle
           <section className="settings-section">
             <h3>Mood journal</h3>
             <div className="hint" style={{ marginBottom: 8 }}>
-              A private, passive record of how you've been — inferred from your conversations, never asked.
+              A private, passive record of how you've been - inferred from your conversations, never asked.
             </div>
             <button className="pill-btn" onClick={onOpenJournal}>Open journal</button>
           </section>
@@ -401,7 +401,7 @@ export default function SettingsPanel({ persona, onClose, onPersonaChange, onCle
                   {(m.kind === 'event' || m.kind === 'recurring' || m.kind === 'transient') && (
                     <button
                       className="icon-btn"
-                      title="Mark done — stops being mentioned"
+                      title="Mark done - stops being mentioned"
                       onClick={() => completeMemory(m.id)}
                       aria-label="Mark memory completed"
                     >

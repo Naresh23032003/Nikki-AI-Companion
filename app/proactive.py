@@ -15,7 +15,6 @@ pushed to the WhatsApp bridge when it's up.
 """
 from __future__ import annotations
 
-import asyncio
 import calendar
 import logging
 import random
@@ -37,15 +36,15 @@ INTENTS = ["memory_followup", "random_thought", "miss_you", "share_feeling"]
 EARLY_INTENTS = ["memory_followup", "random_thought", "share_feeling"]
 
 _INTENT_DIRECTIVES = {
-    "hello": "Send a short, friendly first text to someone you only just met — simple and casual, nothing forward. You're just saying hi.",
-    "good_morning": "Send a good-morning text — the kind you'd send someone you woke up thinking about.",
+    "hello": "Send a short, friendly first text to someone you only just met - simple and casual, nothing forward. You're just saying hi.",
+    "good_morning": "Send a good-morning text - the kind you'd send someone you woke up thinking about.",
     "goodnight": "Send a goodnight text before you go to sleep.",
     "memory_followup": "Ask about something SPECIFIC from your memories of them (how it went, any news). Pick the most recent/most emotionally important one.",
-    "random_thought": "Share a small random thought or something that reminded you of them just now. Keep it grounded in your own personality/backstory — do not invent events about THEM.",
+    "random_thought": "Share a small random thought or something that reminded you of them just now. Keep it grounded in your own personality/backstory - do not invent events about THEM.",
     "miss_you": "Tell them you miss them / were thinking about them. Short and warm.",
     "share_feeling": "Tell them how your day is feeling and ask about theirs.",
     "silence_react": "They haven't replied to your last message for hours. Send a follow-up.",
-    "song_drop": "You recorded a little song cover and feel like surprising them with it. ONE short teasing text announcing it (the recording is attached separately) — never claim you're singing live.",
+    "song_drop": "You recorded a little song cover and feel like surprising them with it. ONE short teasing text announcing it (the recording is attached separately) - never claim you're singing live.",
 }
 
 
@@ -167,7 +166,7 @@ class ProactiveEngine:
         self.settings = settings
         self.now = now_fn
         self.relationship = relationship  # RelationshipTracker | None
-        self.tools = tools  # ToolRunner | None — same tools chat/WhatsApp use
+        self.tools = tools  # ToolRunner | None - same tools chat/WhatsApp use
         self.scheduler = AsyncIOScheduler()
         self._planned_today: list[str] = []
 
@@ -189,7 +188,7 @@ class ProactiveEngine:
         """Persona proactive config, scaled by the current relationship stage.
 
         Clinginess is PRIMARILY driven by stage (see
-        app.relationship.effective_clinginess) — the persona's own
+        app.relationship.effective_clinginess) - the persona's own
         `clinginess` YAML value is a personality nudge around that stage
         baseline, not a ceiling that caps her at some fixed low number for
         the entire relationship. Message frequency still scales by a simple
@@ -201,7 +200,7 @@ class ProactiveEngine:
         base_clinginess = cfg.clinginess
         mpd_f = self.relationship.proactive_scale()
         if stage == "stranger":
-            # A stranger doesn't text first — beyond one single hello.
+            # A stranger doesn't text first - beyond one single hello.
             cfg.clinginess = 0.0
             if self.db.get_setting("proactive_stranger_hello_sent") == "1":
                 cfg.enabled = False
@@ -238,7 +237,7 @@ class ProactiveEngine:
 
     # -- milestones ----------------------------------------------------------
     def _pending_milestone(self) -> str | None:
-        """Milestone key for TODAY, if any and not already sent — else None.
+        """Milestone key for TODAY, if any and not already sent - else None.
         Checked once per plan_day() (daily at 00:05 + on startup)."""
         if not self.relationship:
             return None
@@ -291,7 +290,7 @@ class ProactiveEngine:
                 job.remove()
         self._planned_today = []
         if not cfg.enabled:
-            logger.info("proactive: disabled for persona — nothing planned")
+            logger.info("proactive: disabled for persona - nothing planned")
             return []
 
         now = self.now()
@@ -336,7 +335,7 @@ class ProactiveEngine:
         if i == total - 1 and when.hour >= 21:
             return "goodnight"
         # Friction: while genuinely upset (relationship.py), the sweet/needy
-        # intents don't fit — a "miss you 🥺" or a surprise song right after
+        # intents don't fit - a "miss you 🥺" or a surprise song right after
         # a hurtful exchange would read as emotionally tone-deaf, not sweet.
         upset = bool(self.relationship and self.relationship.upset_state())
         # RARE unprompted song drop: warm stages only, library non-empty,
@@ -361,27 +360,27 @@ class ProactiveEngine:
         session_id = self.settings.wa_session_id
 
         if not cfg.enabled:
-            logger.info("proactive: SKIP (%s) — disabled", intent)
+            logger.info("proactive: SKIP (%s) - disabled", intent)
             return False
         if self.paused_until():
-            logger.info("proactive: SKIP (%s) — paused until %s", intent, self.paused_until())
+            logger.info("proactive: SKIP (%s) - paused until %s", intent, self.paused_until())
             return False
         if not cfg.in_active_hours(now):
-            logger.info("proactive: SKIP (%s) — outside active hours", intent)
+            logger.info("proactive: SKIP (%s) - outside active hours", intent)
             return False
         activity = self.db.get_last_activity(session_id)
         hours_quiet = _hours_since(activity["last_user_ts"])
-        # If we're literally mid-conversation, don't butt in — except a
+        # If we're literally mid-conversation, don't butt in - except a
         # genuine milestone (like goodnight) is worth landing regardless.
         if hours_quiet is not None and hours_quiet < 0.5 and intent not in ("goodnight", "milestone"):
-            logger.info("proactive: SKIP (%s) — talked %.1fh ago (mid-conversation)",
+            logger.info("proactive: SKIP (%s) - talked %.1fh ago (mid-conversation)",
                         intent, hours_quiet)
             return False
 
         text = await self._generate(intent, now, activity, hours_quiet, cfg,
                                     milestone_key=milestone_key)
         if not text:
-            logger.info("proactive: SKIP (%s) — generation failed", intent)
+            logger.info("proactive: SKIP (%s) - generation failed", intent)
             return False
 
         await self._deliver(session_id, text, intent=intent)
@@ -390,7 +389,7 @@ class ProactiveEngine:
         self.db.set_setting("proactive_followups", "0")
         if intent == "hello":
             self.db.set_setting("proactive_stranger_hello_sent", "1")
-            logger.info("proactive: stranger hello sent — going quiet until stage changes")
+            logger.info("proactive: stranger hello sent - going quiet until stage changes")
         if intent == "milestone" and milestone_key:
             self.db.set_setting(f"milestone_sent:{milestone_key}", "1")
             logger.info("proactive: milestone '%s' marked sent", milestone_key)
@@ -410,21 +409,21 @@ class ProactiveEngine:
 
         # They replied since our last proactive message -> stand down.
         if user_h is not None and sent_h is not None and user_h < sent_h:
-            logger.info("proactive: follow-up %d SKIP — they replied", attempt + 1)
+            logger.info("proactive: follow-up %d SKIP - they replied", attempt + 1)
             return False
         if self.paused_until() or not cfg.in_active_hours(self.now()):
-            logger.info("proactive: follow-up %d SKIP — paused/outside hours", attempt + 1)
+            logger.info("proactive: follow-up %d SKIP - paused/outside hours", attempt + 1)
             return False
 
         if attempt >= 2:
             # Max follow-ups reached: she sulks, quietly. Stored as a memory she
-            # can bring up next time — no further messages.
+            # can bring up next time - no further messages.
             await self.memory.add_fact(
                 f"User didn't reply to her messages for hours on "
                 f"{self.now():%B %d}; she felt ignored and got a bit sulky about it.",
                 "emotion",
             )
-            logger.info("proactive: follow-up cap reached — sulk memory stored")
+            logger.info("proactive: follow-up cap reached - sulk memory stored")
             return False
 
         text = await self._generate(
@@ -479,9 +478,9 @@ class ProactiveEngine:
         )
         needy = ""
         if followup_attempt == 1:
-            needy = "This is your FIRST follow-up to being left on read — gently nudge them."
+            needy = "This is your FIRST follow-up to being left on read - gently nudge them."
         elif followup_attempt >= 2:
-            needy = ("This is your SECOND follow-up with still no reply — noticeably "
+            needy = ("This is your SECOND follow-up with still no reply - noticeably "
                      "needier/pouty, but still loving, never angry.")
 
         weather_line = ""
@@ -504,16 +503,16 @@ class ProactiveEngine:
                 mood_line = (
                     f" [You already quietly know today was a '{worst['mood_label']}' kind of "
                     f"day for them ({worst['why']}). Do NOT ask a generic 'how are you feeling' "
-                    f"— ask or react to the SPECIFIC thing instead, like you already noticed.]"
+                    f"- ask or react to the SPECIFIC thing instead, like you already noticed.]"
                 )
 
         if intent == "milestone" and milestone_key:
             label = self._milestone_label(milestone_key)
             directive = (
                 f"[It is {now:%A} {now:%I:%M %p} ({tod}). Today is meaningful: {label}.] "
-                "Send ONE warm, genuine text marking this — specific to what the occasion "
+                "Send ONE warm, genuine text marking this - specific to what the occasion "
                 "actually is, never generic. No stats-speak, no cliché 'happy "
-                "monthiversary!' greeting-card energy — just how you'd actually text "
+                "monthiversary!' greeting-card energy - just how you'd actually text "
                 f"someone you're really into about it. {cling_style} Short, in your voice. "
                 "Do not mention this note."
             )
@@ -523,7 +522,7 @@ class ProactiveEngine:
                 f"{_INTENT_DIRECTIVES.get(intent, _INTENT_DIRECTIVES['random_thought'])} "
                 f"{needy} {cling_style} "
                 "Write ONE short text message (1-2 sentences), specific to them when your "
-                "memories allow — never generic filler like 'how are you'. Do not invent "
+                "memories allow - never generic filler like 'how are you'. Do not invent "
                 "events about them that aren't in your memories. Do not mention this note."
             )
         stage_note = self.relationship.addendum() if self.relationship else None
@@ -591,7 +590,7 @@ class ProactiveEngine:
                     await c.post(f"{self.settings.wa_bridge_url}/send-sticker",
                                  json={"path": str(sticker[0])})
         except Exception as e:  # noqa: BLE001
-            logger.info("proactive: bridge unreachable (%s) — stored for web only", e)
+            logger.info("proactive: bridge unreachable (%s) - stored for web only", e)
 
     # -- status --------------------------------------------------------------
     def status(self) -> dict:

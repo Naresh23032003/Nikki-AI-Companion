@@ -158,7 +158,7 @@ button { font-family: inherit; cursor: pointer; }
 
 .bubble-text { white-space: pre-wrap; }
 /* Per-source marker: a 5px dot beside the timestamp (+ faint edge accent on
-   the bubble). webapp_chat gets nothing — only "foreign" channels are marked. */
+   the bubble). webapp_chat gets nothing - only "foreign" channels are marked. */
 .src-dot {
   display: inline-block;
   width: 5px;

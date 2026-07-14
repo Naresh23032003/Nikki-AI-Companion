@@ -1,4 +1,4 @@
-// Lightweight emoji picker (a curated set — the OS keyboard covers the rest).
+// Lightweight emoji picker (a curated set - the OS keyboard covers the rest).
 const EMOJIS = [
   '😀', '😄', '😊', '🥰', '😍', '😘', '😉', '😌', '😂', '🤣',
   '🙂', '😇', '🤗', '🤔', '😴', '😅', '😎', '🥺', '😢', '😭',

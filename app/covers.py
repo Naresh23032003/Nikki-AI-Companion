@@ -1,4 +1,4 @@
-"""PART 5 — Singing covers: songs/inbox/*.mp3 -> her voice -> songs/library/.
+"""PART 5 - Singing covers: songs/inbox/*.mp3 -> her voice -> songs/library/.
 
 Pipeline (one GPU-queue job per song, priority below voice notes):
   Demucs two-stem split -> RVC-convert the vocal (auto pitch shift into her
@@ -8,7 +8,7 @@ Pipeline (one GPU-queue job per song, priority below voice notes):
 
 Delivery rules live in the sing tool (app/tools.py): library hits are instant,
 misses queue a job + an in-character "gimme 10 mins 🤭" via the deferred flow.
-She NEVER claims to sing live on calls — always "i'll send it after".
+She NEVER claims to sing live on calls - always "i'll send it after".
 """
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """Deterministic tests for the programmatic pattern/streak layer (app/journal.py).
 
-No model involved — the whole point of making this layer pure code is that
+No model involved - the whole point of making this layer pure code is that
 these behaviors are now provable:
   - a single bad day never flags a streak
   - 2-3 bad days DO flag a streak (available the very next day)

@@ -1,9 +1,9 @@
-"""PART 3 — Studio TTS: high-quality renders in HER cloned voice.
+"""PART 3 - Studio TTS: high-quality renders in HER cloned voice.
 
 Two engines behind one interface (config `voice.studio_engine`):
-- "xtts": Coqui XTTS-v2 — clones from a reference clip; the message's EMOTION
+- "xtts": Coqui XTTS-v2 - clones from a reference clip; the message's EMOTION
   metadata selects ref/<emotion>/ (fallback: neutral, logged).
-- "chatterbox": Resemble Chatterbox — same neutral clone, emotion mapped to
+- "chatterbox": Resemble Chatterbox - same neutral clone, emotion mapped to
   exaggeration/intensity presets (tunable in config `voice.emotion_presets`).
 
 GPU, lazily loaded and unloaded after idle; renders go through the shared GPU
@@ -62,7 +62,7 @@ def ref_clip_for(emotion: str) -> Path | None:
                      if p.suffix.lower() in {".wav", ".flac", ".mp3"}]
             if clips:
                 if candidate != emo:
-                    logger.info("studio: no ref for %r — using neutral", emo)
+                    logger.info("studio: no ref for %r - using neutral", emo)
                 return random.choice(clips)
     logger.warning("studio: no reference clips found under %s", REF_ROOT)
     return None
@@ -78,7 +78,7 @@ class StudioTTS:
         self.idle_unload_s = int(vcfg.get("studio_idle_unload_s", 300))
         # Minimum free VRAM to load the engine on CUDA. XTTS-v2 takes ~3.4GB;
         # loading it into a card without that much headroom doesn't OOM on
-        # Windows — the driver silently spills into shared system memory and
+        # Windows - the driver silently spills into shared system memory and
         # EVERYTHING on the GPU (Ollama included) crawls: a measured render
         # went from RTF 1.04 to RTF 24 (510s), starving chat into 120s
         # ReadTimeouts. Better to refuse and let callers fall back to
@@ -143,11 +143,11 @@ class StudioTTS:
                 free = self._vram_free_mb()
                 if free is not None and free < self.min_free_vram_mb:
                     # Deliberately raise instead of quietly using CPU: a CPU
-                    # XTTS render takes minutes per sentence — the Kokoro
+                    # XTTS render takes minutes per sentence - the Kokoro
                     # fallback in the callers is the right degradation.
                     raise RuntimeError(
                         f"only {free:.0f}MB VRAM free (< {self.min_free_vram_mb}MB "
-                        f"needed) — skipping studio load so the GPU doesn't "
+                        f"needed) - skipping studio load so the GPU doesn't "
                         f"over-commit and stall chat; falling back to Kokoro")
             before = self._vram_mb()
             logger.info("studio: loading %s on %s… (VRAM used: %s MB)",
@@ -157,7 +157,7 @@ class StudioTTS:
                 self._engine = self._build(device)
             except Exception as e:  # noqa: BLE001 - OOM etc -> CPU fallback
                 if device == "cuda":
-                    logger.warning("studio: GPU load failed (%s) — using CPU", e)
+                    logger.warning("studio: GPU load failed (%s) - using CPU", e)
                     self._engine = self._build("cpu")
                 else:
                     raise
@@ -191,7 +191,7 @@ class StudioTTS:
                 pass
 
     def maybe_idle_unload(self) -> None:
-        """Unload after idle — but NEVER while a render holds _render_lock.
+        """Unload after idle - but NEVER while a render holds _render_lock.
 
         The old version stamped _last_used at render START, so any render
         longer than idle_unload_s got 'unloaded' mid-flight: engine nulled
@@ -201,7 +201,7 @@ class StudioTTS:
         if self._engine is None:
             return
         if not self._render_lock.acquire(blocking=False):
-            return  # render in progress — not idle, try again next tick
+            return  # render in progress - not idle, try again next tick
         try:
             if time.time() - self._last_used > self.idle_unload_s:
                 self.unload()
@@ -228,7 +228,7 @@ class StudioTTS:
         """Render text -> (samples, sample_rate) in her cloned voice.
 
         Holds _render_lock for the duration (blocks maybe_idle_unload), and
-        stamps _last_used at the END — the idle countdown starts when the
+        stamps _last_used at the END - the idle countdown starts when the
         render finishes, not when it began."""
         with self._render_lock:
             try:

@@ -155,7 +155,7 @@ export function useCall(sessionId, { onEnded } = {}) {
         case 'error':
           setError(msg.message || 'Call error')
           // Without this, a turn that failed server-side left phase stuck on
-          // 'thinking'/'listening' forever — the mic looked dead with no way
+          // 'thinking'/'listening' forever - the mic looked dead with no way
           // to recover short of ending the call.
           setPhaseSafe('idle')
           break
@@ -193,7 +193,7 @@ export function useCall(sessionId, { onEnded } = {}) {
         // don't override an in-progress greeting
         setPhase((prev) => (prev === 'ringing' || prev === 'connecting' ? prev : 'idle'))
       } catch (e) {
-        setError('Mic / VAD unavailable — check microphone permission.')
+        setError('Mic / VAD unavailable - check microphone permission.')
       }
     }
 

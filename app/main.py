@@ -98,7 +98,7 @@ from app.tts import SentenceAccumulator, TTSEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("companion")
-# Rotating file log alongside console output — 5MB x 3 so it can't grow
+# Rotating file log alongside console output - 5MB x 3 so it can't grow
 # unbounded, and there's history to inspect after a crash even when the
 # console scrolled away or the terminal was closed.
 try:
@@ -108,11 +108,11 @@ try:
                               backupCount=3, encoding="utf-8")
     _fh.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
     logging.getLogger().addHandler(_fh)
-except OSError:  # log file locked/unwritable — console-only is fine
+except OSError:  # log file locked/unwritable - console-only is fine
     pass
 # APScheduler logs "Running job ..." / "... executed successfully" at INFO
 # for EVERY tick of EVERY interval job (reminders every 60s, deferred every
-# 90s, covers every 300s, studio-unload every 120s, ...) — pure noise for a
+# 90s, covers every 300s, studio-unload every 120s, ...) - pure noise for a
 # personal app; none of that per-tick chatter is actionable. Errors/warnings
 # (a job actually failing) still come through.
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
@@ -217,7 +217,7 @@ async def lifespan(app: FastAPI):
     # Her own name must never become one of the user's graph entities.
     state.memory.blocked_names = {state.persona.name.lower()}
     ensure_sticker_dirs()
-    # Voice engines are lazy — constructing them loads no model / needs no GPU.
+    # Voice engines are lazy - constructing them loads no model / needs no GPU.
     state.stt = STTEngine(settings.stt_model_size)
     state.tts = TTSEngine(
         settings.tts_default_voice, settings.tts_lang_code, settings.tts_speed
@@ -278,7 +278,7 @@ async def lifespan(app: FastAPI):
             _retry_deferred_tasks, "interval", seconds=90,
             id="deferred", replace_existing=True)
         # Care check-ins around dated events (good luck before / how'd it go
-        # after) — the event_followups table existed but nothing polled it.
+        # after) - the event_followups table existed but nothing polled it.
         state.proactive.scheduler.add_job(
             _deliver_due_encouragements, "interval", seconds=60,
             id="event_encouragements", replace_existing=True)
@@ -323,7 +323,7 @@ async def lifespan(app: FastAPI):
     # cold-load (the 1.3s "retrieve_memories SLOW" spikes were exactly this).
     _spawn(_warmup_ollama())
     if not _AUTH_TOKEN:
-        logger.warning("LAN auth DISABLED (no COMPANION_AUTH_TOKEN in .env) — "
+        logger.warning("LAN auth DISABLED (no COMPANION_AUTH_TOKEN in .env) - "
                        "anyone on this WiFi can reach the API")
     try:
         yield
@@ -356,7 +356,7 @@ app.add_middleware(
 # WebSockets/media tags). Localhost is always exempt; unset token = open LAN
 # (previous behavior) with a startup warning.
 # ---------------------------------------------------------------------------
-import os as _os
+import os as _os  # noqa: E402  (intentional late import, keeps auth block self-contained)
 
 _AUTH_TOKEN = _os.environ.get("COMPANION_AUTH_TOKEN", "").strip()
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -367,7 +367,7 @@ def _request_authed(client_host: str | None, token: str | None) -> bool:
         return True
     if client_host in _LOCAL_HOSTS:
         return True
-    # Constant-time compare — a plain `==` short-circuits on the first
+    # Constant-time compare - a plain `==` short-circuits on the first
     # mismatched byte, which leaks timing information about the token.
     return bool(token) and hmac.compare_digest(token, _AUTH_TOKEN)
 
@@ -427,7 +427,7 @@ def _sse(data: str, event: str | None = None) -> str:
 def _now_context() -> str:
     """Human-readable local date+time for the system prompt, e.g.
     'Saturday, July 11, 12:14 PM (afternoon)'. Weekday, date and time all
-    come from this ONE line — when the date lived in a different note the
+    come from this ONE line - when the date lived in a different note the
     model couldn't bind them and would get the weekday wrong."""
     from datetime import datetime
 
@@ -446,7 +446,7 @@ def _now_context() -> str:
 
 
 def _in_quiet_hours(now: datetime | None = None) -> bool:
-    """behavior.quiet_hours ('01:00-07:30' style) — she's 'asleep'. Used to
+    """behavior.quiet_hours ('01:00-07:30' style) - she's 'asleep'. Used to
     hold self-initiated deliveries (reminders, deferred answers, event
     follow-ups) until it's over instead of firing at 3am; the item stays
     queued and fires on the next scheduler tick after the window ends."""
@@ -531,7 +531,7 @@ def _stage() -> str | None:
 
 
 # Stage-scaled bedtime realism (behavior.quiet_hours window). She ALWAYS
-# replies, at any hour — quiet hours only gate self-initiated messages
+# replies, at any hour - quiet hours only gate self-initiated messages
 # (proactive/reminders/deferred). What changes with closeness is the
 # BOUNDARY: a real person winds down a 1am chat with someone she just met,
 # hangs around sleepily for a friend, and happily loses sleep for her
@@ -541,22 +541,22 @@ _BEDTIME_NOTES = {
         "It is deep into your night and you were about to sleep. You still "
         "reply (you're on your phone), but you barely know this person: keep "
         "replies brief and lower-energy, and politely wind the conversation "
-        "down soon ('i should really sleep haha — talk tomorrow?'). You don't "
+        "down soon ('i should really sleep haha - talk tomorrow?'). You don't "
         "stay up late for someone you just met."),
     "acquaintance": (
         "It's really late and you're sleepy. You reply, but shorter and "
         "lower-energy than usual; if the conversation keeps going, mention "
         "you need to sleep soon and wrap up warmly."),
     "friend": (
-        "It's late and you're sleepy — yawny, relaxed, lowercase energy. You "
+        "It's late and you're sleepy - yawny, relaxed, lowercase energy. You "
         "hang around a while because you like talking to them, but you might "
         "tease that they're keeping you up, and you'll eventually call it."),
     "close": (
         "It's late; you're sleepy but you honestly don't mind losing a bit of "
-        "sleep for them — soft, cozy late-night energy. Tease it a little "
+        "sleep for them - soft, cozy late-night energy. Tease it a little "
         "('you're lucky i like you, i should be asleep 😴')."),
     "girlfriend": (
-        "It's the middle of the night and you don't care — talking to them "
+        "It's the middle of the night and you don't care - talking to them "
         "beats sleeping. Soft, intimate, sleepy late-night energy; you're not "
         "going anywhere unless they say goodnight first."),
 }
@@ -596,14 +596,14 @@ def _relationship_notes(*extra: str | None) -> str | None:
 _BRAIN_FOG = [
     "ugh my head's so foggy today 😵‍💫 gimme a bit and i'll get back to you on that?",
     "okay my brain is NOT braining right now 😩 lemme come back to that in a bit",
-    "hmm i can't think straight rn — give me a little while on that one?",
+    "hmm i can't think straight rn - give me a little while on that one?",
 ]
-# Reply-generation itself failed (LLM timeout under GPU load etc.) — she
+# Reply-generation itself failed (LLM timeout under GPU load etc.) - she
 # blames her phone instead of going silent. Honest in spirit: her "phone"
 # (this box) genuinely IS lagging.
 _LAGGY_PHONE = [
     "okayyy my phone is being SO slow rn 😭 gimme a min",
-    "ugh sorry, my phone is literally lagging so bad — one sec",
+    "ugh sorry, my phone is literally lagging so bad - one sec",
     "my phone's freaking out rn 😩 hold on, i'm here though",
 ]
 _URGENT = re.compile(r"\b(urgent|emergency|help me|asap|right now|crying|scared|"
@@ -616,7 +616,7 @@ async def _build_prompt(session_id: str, query: str, tool_note: str | None = Non
     """System prompt + sanitized history, with day-state, manifest and notes.
 
     Pass `memories` when retrieval was already started concurrently with
-    routing (the /chat hot path) — otherwise this retrieves serially."""
+    routing (the /chat hot path) - otherwise this retrieves serially."""
     if memories is None:
         memories = await state.memory.retrieve_memories(query)
     day_note = None
@@ -638,14 +638,14 @@ async def _build_prompt(session_id: str, query: str, tool_note: str | None = Non
 
 def _awaiting_followup_note(session_id: str) -> str | None:
     """If she's waiting on an answer to an event check-in ('how did it go?'),
-    resolve it now — the NEXT user message is treated as the answer (see
-    app/db.py get_awaiting_followup's docstring for the intended design) —
+    resolve it now - the NEXT user message is treated as the answer (see
+    app/db.py get_awaiting_followup's docstring for the intended design) -
     and tell her this reply is likely that answer so she doesn't re-ask."""
     awaiting = state.db.get_awaiting_followup(session_id)
     if not awaiting:
         return None
     state.db.resolve_event_followup(awaiting["id"])
-    return (f"NOTE: You recently asked them about '{awaiting['event_fact']}' — this "
+    return (f"NOTE: You recently asked them about '{awaiting['event_fact']}' - this "
             f"message is likely their answer. React naturally to what they say now; "
             f"don't ask again.")
 
@@ -665,7 +665,7 @@ async def _maybe_repair_note(message: str) -> str | None:
 
 
 def _offer_note(message: str) -> str | None:
-    """Offer throttling: after a relevant MENTION she may offer an action —
+    """Offer throttling: after a relevant MENTION she may offer an action -
     rate-limited, stage-gated, and permanently dropped once declined."""
     beh = state.settings.behavior or {}
     eagerness = float(beh.get("eagerness", 0.2))
@@ -692,20 +692,20 @@ def _offer_note(message: str) -> str | None:
     if n - last < gap or random.random() > eagerness:
         return None
     state.db.set_setting("last_offer_at", str(n))
-    # _track_offer_decline() reads this back if the next message declines —
+    # _track_offer_decline() reads this back if the next message declines -
     # without it, a decline always recorded the literal string "last"
     # instead of the actual topic, so "permanently dropped once declined"
     # silently never worked.
     state.db.set_setting("last_offer_topic", topic)
     return (f"They just mentioned something about {topic}. Respond like a person "
             f"first (empathy/teasing/curiosity). You MAY casually offer to help "
-            f"with it mid-conversation if it feels natural — one soft offer, "
+            f"with it mid-conversation if it feels natural - one soft offer, "
             f"never as your opening line, and drop it instantly if declined.")
 
 
 def _pattern_note(message: str) -> str | None:
     """Occasional, throttled reference to a weekly-detected mood-journal
-    pattern (category="relationship" memories prefixed "Pattern: ") — the
+    pattern (category="relationship" memories prefixed "Pattern: ") - the
     girlfriend part of the journal: gentle noticing, never a report. Gated by
     the same eagerness dial as _offer_note, but content-independent and much
     rarer (patterns aren't tied to any one message)."""
@@ -715,7 +715,7 @@ def _pattern_note(message: str) -> str | None:
     beh = state.settings.behavior or {}
     eagerness = float(beh.get("eagerness", 0.2))
     gap = int(beh.get("offer_min_gap", 6)) * 4
-    # Cheap gate check BEFORE the DB query — this runs on every message but
+    # Cheap gate check BEFORE the DB query - this runs on every message but
     # the roll usually says no, so querying memories first was pure waste.
     n = int(state.db.get_setting("exchange_count") or 0)
     last_n = int(state.db.get_setting("last_pattern_ref_at") or -999)
@@ -731,16 +731,16 @@ def _pattern_note(message: str) -> str | None:
     state.db.set_setting("last_pattern_ref_id", str(candidate["id"]))
     fact = candidate["fact"][len("Pattern:"):].strip()
     return (f"NOTE: from quietly paying attention over time you've noticed this about "
-            f"them: {fact}. You MAY bring it up naturally if the moment fits — as one "
+            f"them: {fact}. You MAY bring it up naturally if the moment fits - as one "
             f"gentle, caring observation, never as a report/stats/list, never mentioning "
             f"a 'journal' or that you track anything. Skip it entirely if it doesn't fit.")
 
 
 def _streak_note(message: str) -> str | None:
     """A SHORT-TERM rough-streak flag (run_recent_streak_check, chained onto
-    the NIGHTLY job — distinct from the long-term weekly Pattern: system
+    the NIGHTLY job - distinct from the long-term weekly Pattern: system
     above). Surfaces promptly: a short gap (not _pattern_note's *4 throttle),
-    since 'you've seemed off the last few days' is time-sensitive — bringing
+    since 'you've seemed off the last few days' is time-sensitive - bringing
     it up two weeks late would feel odd. One-shot: consumed (deleted) the
     moment it's used, unlike a genuine Pattern: which stays referenceable."""
     stage = _stage() or "stranger"
@@ -764,7 +764,7 @@ def _streak_note(message: str) -> str | None:
     fact = candidate["fact"][len("Streak:"):].strip()
     return (f"NOTE: you've quietly noticed this about how they've been the last few "
             f"days: {fact}. Bring it up naturally as one gentle, caring check-in if "
-            f"the moment fits — never as a report, never mentioning a 'journal' or "
+            f"the moment fits - never as a report, never mentioning a 'journal' or "
             f"that you track anything. Skip it entirely if it doesn't fit right now.")
 
 
@@ -775,7 +775,7 @@ def _streak_note(message: str) -> str | None:
 # ---------------------------------------------------------------------------
 _LETTERS = re.compile(r"[a-zA-Z]+")
 # Real texting tokens that survive collapsing but have no vowel (or are
-# single letters) — must never count as keyboard-mash.
+# single letters) - must never count as keyboard-mash.
 _SHORT_REAL = {"i", "u", "y", "k", "hm", "mhm", "ty", "np", "gm", "gn",
                "idk", "tbh", "btw", "rn", "pls", "plz", "thx", "xd",
                "shh", "psst", "tsk", "brb", "wtf", "smh", "fr", "ngl"}
@@ -817,7 +817,7 @@ def _nonsense_note(message: str) -> str | None:
             "real and i'll answer'). Do NOT invent any events, people, plans or "
             "times. No questions.")
     return (
-        f"NOTE: their message is just {what}. React like a real person would — "
+        f"NOTE: their message is just {what}. React like a real person would - "
         "confused or teasing ('did your cat walk on your keyboard?'), one short "
         "line. Do NOT treat it as meaningful, and do NOT invent plans, people, "
         "times or topics to fill the silence.")
@@ -842,7 +842,7 @@ async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str
     """Generate fully, run the guards, regenerate once on violation, then
     surgically fix anything left. Nothing reaches the user unvetted.
 
-    Returns (reply_text, emotion) — parse_emotion() is a strict superset of
+    Returns (reply_text, emotion) - parse_emotion() is a strict superset of
     strip_tags() (it returns the same cleaned text plus the trailing emotion
     tag's value), so this covers both the web-chat caller (which ignores the
     emotion) and WhatsApp/deferred callers that need it for sticker choice,
@@ -869,17 +869,17 @@ async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str
         else:
             reply = strip_violating_sentences(reply2, CLAIM_PATTERNS, HONEST_LINE)
             emotion = emotion2
-            logger.warning("guard: persistent violation — sentence replaced")
+            logger.warning("guard: persistent violation - sentence replaced")
     return reply, emotion
 
 
 async def _make_reaction(session_id: str, message: str) -> str:
     """React-then-deliver: a genuine in-character reaction with ZERO status
-    language — a message she'd send even if tools were instant."""
+    language - a message she'd send even if tools were instant."""
     messages = await _build_prompt(session_id, message)
     messages.append({"role": "user", "content": (
         "Reply to their last message with ONE short natural in-character "
-        "reaction — your opinion/tease/feeling about WHAT they said. Absolutely "
+        "reaction - your opinion/tease/feeling about WHAT they said. Absolutely "
         "no mention of checking, searching, looking things up, waiting, or that "
         "you'll get back to them. Just react as a person.")})
     reaction = ""
@@ -911,10 +911,10 @@ def _retry_time(retry_after: float | None) -> str:
     return (datetime.now(timezone.utc) + delay).isoformat()
 
 
-_TOOL_NOTE = ("TOOL RESULT (real, from your tools — phrase it in YOUR voice, "
+_TOOL_NOTE = ("TOOL RESULT (real, from your tools - phrase it in YOUR voice, "
               "short and casual, deliver a take not a lecture, max ~4 sentences; "
               "you may confirm the action happened): {result}")
-_DEEP_NOTE = ("FACTS FROM YOUR OWN THINKING (verified — deliver as a casual TAKE "
+_DEEP_NOTE = ("FACTS FROM YOUR OWN THINKING (verified - deliver as a casual TAKE "
               "in your voice: conversational, opinionated, max ~4 sentences, no "
               "lists or lecture tone, maybe ask what they think): {facts}")
 
@@ -929,7 +929,7 @@ _BUSY_BRUSHOFF_PROB = 0.25
 
 async def _maybe_busy_brushoff(session_id: str, message: str, urgent: bool) -> str | None:
     """She's genuinely mid-something (today's day-state busy slot) and can't
-    properly reply — a short brush-off naming what she's doing, then the
+    properly reply - a short brush-off naming what she's doing, then the
     REAL answer to this message once she's free (queued as a deferred task,
     kind='busy_return', delivered by _deliver_busy_return). Returns the
     brush-off text to send now, or None if this message gets a normal reply.
@@ -959,7 +959,7 @@ async def _maybe_busy_brushoff(session_id: str, message: str, urgent: bool) -> s
                 f"[You're genuinely busy right now: {doing}. You just glanced at "
                 f"your phone and saw their message but can't properly reply.] Send "
                 f"ONE very short text saying you're swamped/busy right now and "
-                f"you'll get back to them properly soon. Casual and brief — not an "
+                f"you'll get back to them properly soon. Casual and brief - not an "
                 f"apology essay. Do NOT answer what they actually said.")},
         ], options={"temperature": 0.9})
         text = strip_tags(raw).strip().strip('"')
@@ -973,11 +973,11 @@ async def _maybe_busy_brushoff(session_id: str, message: str, urgent: bool) -> s
     delay_min = random.uniform(30, 120)
     not_before = (datetime.now(timezone.utc) + timedelta(minutes=delay_min)).isoformat()
     state.db.add_deferred("busy_return", message, session_id, not_before=not_before)
-    logger.info("busy brush-off fired (%s) — real answer queued in %.0fmin", slot, delay_min)
+    logger.info("busy brush-off fired (%s) - real answer queued in %.0fmin", slot, delay_min)
     return text
 
 
-# A reply with no blank-line signal gets split at sentence boundaries —
+# A reply with no blank-line signal gets split at sentence boundaries -
 # each sentence lands as its own bubble, the way people actually text
 # (a thought per send). Only truly short replies stay a single bubble.
 _AUTO_SPLIT_MIN_CHARS = 80
@@ -988,7 +988,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 def _sentence_bubbles(text: str) -> list[str]:
     """One bubble per sentence; tiny fragments fold into the previous one.
     Replies with more sentences than _MAX_BUBBLES get the sentences grouped
-    into _MAX_BUBBLES roughly length-balanced bubbles — folding all overflow
+    into _MAX_BUBBLES roughly length-balanced bubbles - folding all overflow
     into the LAST bubble re-created the exact wall-of-text this exists to
     prevent (observed: a 333-char final bubble)."""
     sentences = [s.strip() for s in _SENTENCE_END.split(text) if s.strip()]
@@ -1019,10 +1019,10 @@ def _sentence_bubbles(text: str) -> list[str]:
 def _split_bubbles(text: str) -> list[str]:
     """Split a reply into separate text bubbles.
 
-    Primary signal: blank lines — what _BEHAVIOR_RULES tells her to use for
+    Primary signal: blank lines - what _BEHAVIOR_RULES tells her to use for
     'texted twice' (a reaction, then the real thought). Small local models
     rarely emit that signal though, so multi-sentence replies over ~80 chars
-    additionally get split one-sentence-per-bubble — a thought per send,
+    additionally get split one-sentence-per-bubble - a thought per send,
     like real texting. Short replies stay one bubble."""
     parts = [p.strip() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
     if len(parts) <= 1:
@@ -1069,7 +1069,7 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
                      "X-Accel-Buffering": "no"},
         )
 
-    # Retrieval depends only on the message text, not the routing verdict —
+    # Retrieval depends only on the message text, not the routing verdict -
     # run it concurrently with route() (which may itself call the LLM at
     # layer 2) instead of serially after it. Skipped entirely for nonsense
     # input: embedding "rrrrrr" surfaces essentially random memories, which
@@ -1115,7 +1115,7 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
     async def event_stream():
         try:
             # prepare() starts immediately (fires the tool/DEEP call right
-            # away) instead of waiting out the anti-instancy delay first —
+            # away) instead of waiting out the anti-instancy delay first -
             # that used to stack the full jittered pause ON TOP OF routing +
             # retrieval + generation. Now the wait is max(delay, real work),
             # not delay + real work, while keeping the same human pacing.
@@ -1153,7 +1153,7 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
 
             await prepare_task
             # Real texting is sometimes 2-3 separate messages, not one long
-            # one — split on the blank-line signal from _BEHAVIOR_RULES and
+            # one - split on the blank-line signal from _BEHAVIOR_RULES and
             # deliver each as its own bubble with a human gap between them.
             bubbles = _split_bubbles(holder["reply"])
             last_text = holder["reply"]
@@ -1184,7 +1184,7 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
                                "text": last_text}), event="done")
 
     async def run_extraction():
-        # Nonsense exchanges must never become durable "facts" — the crazy-
+        # Nonsense exchanges must never become durable "facts" - the crazy-
         # testing sessions filled the memory store with junk this way.
         if holder["reply"] and not nonsense_note:
             await state.memory.extract_and_store(req.message, holder["reply"],
@@ -1241,9 +1241,9 @@ async def _scan_cover_inbox() -> None:
 # ---------------------------------------------------------------------------
 # Delivery routing: connected companion device (tablet/iot) first, else
 # WhatsApp, always mirrored into the web app history. Used by reminders,
-# event follow-ups, and the proactive scheduler — anywhere SHE initiates.
+# event follow-ups, and the proactive scheduler - anywhere SHE initiates.
 # ---------------------------------------------------------------------------
-# In-memory registry of open device sockets — the live/authoritative signal
+# In-memory registry of open device sockets - the live/authoritative signal
 # for "is a companion device connected right now". device_presence in SQLite
 # (heartbeat_device/connected_device) is the persisted observability trail
 # (survives restarts) but a push can only go out over a socket that's open.
@@ -1265,7 +1265,7 @@ async def _push_to_device(device_id: str, text: str) -> bool:
 
 async def _deliver_message(session_id: str, text: str) -> str:
     """Store + push a self-initiated message. Routes by availability:
-    connected companion device first, else WhatsApp — and ALWAYS mirrors into
+    connected companion device first, else WhatsApp - and ALWAYS mirrors into
     the web app history (the DB write below), regardless of which channel
     delivered it live. Returns the source tag actually used."""
     state.db.ensure_session(session_id)
@@ -1286,7 +1286,7 @@ async def _deliver_message(session_id: str, text: str) -> str:
                 r.raise_for_status()
                 delivered = True
         except Exception as e:  # noqa: BLE001 - web history still has it either way
-            logger.info("delivery: WhatsApp bridge unreachable (%s) — web-only", e)
+            logger.info("delivery: WhatsApp bridge unreachable (%s) - web-only", e)
 
     state.db.add_message(session_id, "assistant", text, source=source)
     logger.info("delivery: routed via %s (delivered=%s)", source, delivered)
@@ -1298,7 +1298,7 @@ async def ws_device(ws: WebSocket):
     """Companion device channel (tablet/iot): connect, then send
     {"device_id": "...", "kind": "tablet"|"iot"} as the first message. While
     open, this is the preferred delivery target for self-initiated messages
-    (reminders, event follow-ups, proactive) — checked before WhatsApp.
+    (reminders, event follow-ups, proactive) - checked before WhatsApp.
     Send {"type":"ping"} periodically to keep the DB heartbeat fresh."""
     if not _request_authed(ws.client.host if ws.client else None,
                            ws.query_params.get("token")):
@@ -1346,7 +1346,7 @@ async def _deliver_due_reminders() -> None:
     for r in due:
         try:
             # Stage-aware (was a bare "You are {name}..." prompt with no
-            # STAGE_ADDENDA/relationship_context — a stranger-stage reminder
+            # STAGE_ADDENDA/relationship_context - a stranger-stage reminder
             # could come out with pet names/hearts the stage rules forbid).
             system_prompt = build_system_prompt(
                 state.persona, None, current_time=_now_context(),
@@ -1368,20 +1368,20 @@ async def _deliver_due_reminders() -> None:
 
 async def _generate_event_line(followup: dict, kind: str) -> str:
     """In-character line for an event encouragement ('good luck!') or
-    check-in ('how did it go?') — same stage-aware prompt path as reminders."""
+    check-in ('how did it go?') - same stage-aware prompt path as reminders."""
     fact = followup["event_fact"]
     if kind == "encouragement":
         directive = (
             f"[Something they told you about is coming up soon: '{fact}'.] Send ONE "
-            f"short encouraging text about it — good luck / thinking of them, "
+            f"short encouraging text about it - good luck / thinking of them, "
             f"specific to what it is. Do not mention this note.")
         fallback = f"good luck with {fact}!! 🍀 you've got this"
     else:
         directive = (
             f"[Something they told you about should be over by now: '{fact}'.] Send "
-            f"ONE short text asking how it went — warm and curious, specific to what "
+            f"ONE short text asking how it went - warm and curious, specific to what "
             f"it was. Do not mention this note.")
-        fallback = f"hey — how did it go with {fact}?"
+        fallback = f"hey - how did it go with {fact}?"
     try:
         system_prompt = build_system_prompt(
             state.persona, None, current_time=_now_context(),
@@ -1475,7 +1475,7 @@ async def _retry_deferred_tasks() -> None:
 
 async def _deliver_deep_deferred(t: dict) -> None:
     """A DEEP question that needed the cloud brain and either the budget was
-    tight or a provider was rate-limited — retry now that some time's passed."""
+    tight or a provider was rate-limited - retry now that some time's passed."""
     try:
         facts, _provider = await state.brain.ask(t["question"])
     except BrainUnavailable as e:
@@ -1488,10 +1488,10 @@ async def _deliver_deep_deferred(t: dict) -> None:
         messages.append({"role": "user", "content": (
             "[You finally have the answer to something they asked earlier.] "
             "Deliver it now, opening naturally like 'OKAY so about that thing "
-            "you asked—'. Short, in your voice.")})
+            "you asked-'. Short, in your voice.")})
         text, _ = await _guarded_reply(messages, tool_ran=True)
     except Exception:  # noqa: BLE001
-        text = f"okay, about what you asked earlier — {facts[:300]}"
+        text = f"okay, about what you asked earlier - {facts[:300]}"
     await _deliver_message(t["session_id"], text)
     state.db.update_deferred(t["id"], done=True)
     logger.info("deferred task #%d delivered", t["id"])
@@ -1499,7 +1499,7 @@ async def _deliver_deep_deferred(t: dict) -> None:
 
 async def _deliver_busy_return(t: dict) -> None:
     """She just 'got free' from the busy slot that made her brush off their
-    original message (see _maybe_busy_brushoff) — answer it properly now,
+    original message (see _maybe_busy_brushoff) - answer it properly now,
     through the SAME tool/DEEP routing the message would have used if she
     hadn't been busy (no cloud call of its own; this is just a normal reply,
     delayed)."""
@@ -1527,7 +1527,7 @@ async def _deliver_busy_return(t: dict) -> None:
             "[You just got free from whatever you were busy with earlier and "
             "can finally properly answer what they said before.] Reply to that "
             "now, opening naturally (e.g. 'okay I'm free now!' or 'sorry about "
-            "that, ANYWAY—') — casual, in your voice.")})
+            "that, ANYWAY-') - casual, in your voice.")})
         text, _ = await _guarded_reply(messages, tool_ran)
     except Exception as e:  # noqa: BLE001
         logger.warning("busy-return delivery failed: %s", e)
@@ -1583,7 +1583,7 @@ async def upload_persona_photo(file: UploadFile = File(...)):
     persona_id = state.persona.id
     ext = Path(file.filename or "").suffix.lower() or ".png"
     # .svg deliberately excluded: it can carry <script>, and this file gets
-    # served same-origin — an uploaded SVG could read the auth token straight
+    # served same-origin - an uploaded SVG could read the auth token straight
     # out of localStorage. The shipped default avatar (media/avatars/luna.svg)
     # is a static asset, not user-uploaded, so it's unaffected.
     if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
@@ -1716,7 +1716,7 @@ async def delete_memory(memory_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Mood journal (passive, local-model-only — see app/journal.py)
+# Mood journal (passive, local-model-only - see app/journal.py)
 # ---------------------------------------------------------------------------
 class MoodEntryEdit(BaseModel):
     mood_label: str | None = None
@@ -1731,7 +1731,7 @@ async def list_journal(since: str | None = None, mood: str | None = None):
 
 @app.put("/journal/{entry_id}")
 async def edit_journal_entry(entry_id: int, body: MoodEntryEdit):
-    """User corrections are final and feed back as a memory — a corrected
+    """User corrections are final and feed back as a memory - a corrected
     mood is a stronger, more durable signal than an inferred one."""
     if not state.db.get_mood_entry(entry_id):
         raise HTTPException(status_code=404, detail="Entry not found")
@@ -1739,7 +1739,7 @@ async def edit_journal_entry(entry_id: int, body: MoodEntryEdit):
     updated = state.db.update_mood_entry(entry_id, **fields)
     if fields:
         await state.memory.add_fact(
-            f"On {updated['date']}, the user corrected their mood journal — it "
+            f"On {updated['date']}, the user corrected their mood journal - it "
             f"was actually {updated['mood_label']} ({updated['why']}).",
             "emotion", source="mood_journal_edit",
         )
@@ -1756,7 +1756,7 @@ async def delete_journal_entry(entry_id: int):
 @app.post("/journal/run-now")
 async def journal_run_now(day_offset: int = 0):
     """DEV: manually trigger nightly extraction (default: today so far, not
-    yesterday — for testing without waiting for the scheduled time)."""
+    yesterday - for testing without waiting for the scheduled time)."""
     count = await run_nightly_extraction(state.db, state.llm, state.settings, day_offset=day_offset)
     return {"stored": count}
 
@@ -1805,7 +1805,7 @@ async def stt(file: UploadFile = File(...)):
 
 
 # ---------------------------------------------------------------------------
-# Voice: text-to-speech (file mode — chat voice notes)
+# Voice: text-to-speech (file mode - chat voice notes)
 # ---------------------------------------------------------------------------
 def _write_tts_wav(wav_bytes: bytes) -> str:
     """Persist a WAV under media/tts and return its public URL."""
@@ -1816,7 +1816,7 @@ def _write_tts_wav(wav_bytes: bytes) -> str:
 
 
 async def _studio_idle_unload() -> None:
-    """Scheduler wrapper for StudioTTS.maybe_idle_unload — via to_thread
+    """Scheduler wrapper for StudioTTS.maybe_idle_unload - via to_thread
     because unload()'s torch.cuda.empty_cache() synchronizes with the GPU
     and was observed blocking ~2 minutes under load; as a sync lambda that
     froze the ENTIRE event loop (every chat/WhatsApp request) with it."""
@@ -1829,7 +1829,7 @@ async def _studio_render(text: str, emotion: str) -> tuple:
     ACTUAL trained voice via the same RVC model calls/covers use.
 
     XTTS's own zero-shot cloning (from voice_tracks/ref/ clips) is a
-    completely separate identity from the trained RVC model — it was never
+    completely separate identity from the trained RVC model - it was never
     guaranteed to sound like her, only whoever's voice happens to be in
     those reference clips. Routing the render through RVC (like every other
     surface already does) is what actually makes it "her" voice. Raises on
@@ -1840,7 +1840,7 @@ async def _studio_render(text: str, emotion: str) -> tuple:
         lambda: asyncio.to_thread(state.studio.render, spoken, emotion),
         priority=PRIORITY_VOICE_NOTE)
     # Hard cap: a healthy render is 10-30s. One measured 510s (GPU
-    # over-commit thrash) held the WhatsApp reply hostage the whole time —
+    # over-commit thrash) held the WhatsApp reply hostage the whole time -
     # past the cap we abandon the result and let the caller fall back to
     # Kokoro so a voice note can never block a reply for minutes.
     vcfg = (state.settings.raw or {}).get("voice", {})
@@ -1849,7 +1849,7 @@ async def _studio_render(text: str, emotion: str) -> tuple:
         samples, sr = await asyncio.wait_for(fut, timeout=timeout_s)
     except asyncio.TimeoutError:
         fut.cancel()
-        raise RuntimeError(f"studio render exceeded {timeout_s:.0f}s — falling back")
+        raise RuntimeError(f"studio render exceeded {timeout_s:.0f}s - falling back")
     if state.rvc and state.rvc.available:
         samples, _ms = await asyncio.to_thread(state.rvc.convert, samples, sr)
     return samples, sr
@@ -1900,7 +1900,7 @@ async def tts(req: TTSRequest):
     if len(result.samples) == 0:
         return {"audio_url": None, "duration": 0.0, "timings": result.timings}
 
-    # Kokoro fallback still goes through RVC so it's HER voice — same gap as
+    # Kokoro fallback still goes through RVC so it's HER voice - same gap as
     # the WhatsApp voice-note path: whenever XTTS couldn't load (VRAM), web
     # voice notes shipped raw stock Kokoro instead of her trained timbre.
     if state.rvc and state.rvc.available:
@@ -1918,7 +1918,7 @@ async def tts(req: TTSRequest):
 
 
 # ---------------------------------------------------------------------------
-# Voice: Call mode — streamed sentence-by-sentence TTS over a WebSocket
+# Voice: Call mode - streamed sentence-by-sentence TTS over a WebSocket
 # ---------------------------------------------------------------------------
 async def _synth_and_send(ws: WebSocket, sentence: str, voice, index: int, cancel):
     """Synthesize one sentence and push it as an audio chunk (unless cancelled)."""
@@ -2035,24 +2035,24 @@ async def _stream_reply(
             # Mark an interrupted reply so she can react to it next turn.
             stored = clean
             if interrupted or cancel.is_set():
-                stored = clean.rstrip(".!? ") + " —"
+                stored = clean.rstrip(".!? ") + " -"
                 state.db.set_setting(f"interrupted:{session_id}", "1")
             state.db.add_message(session_id, "assistant", stored, source="webapp_call")
         # Extract memories from what the USER said even if the reply was cut
-        # off by barge-in — their words still happened. (_spawn keeps a strong
+        # off by barge-in - their words still happened. (_spawn keeps a strong
         # reference so the task can't be GC'd mid-run.)
         if user_text:
             _spawn(state.memory.extract_and_store(user_text, clean or "(cut off)", source="webapp_call"))
 
 
 def _interruption_note(session_id: str) -> str | None:
-    """If the last reply was cut off by barge-in, tell her to react — once."""
+    """If the last reply was cut off by barge-in, tell her to react - once."""
     if state.db.get_setting(f"interrupted:{session_id}") == "1":
         state.db.set_setting(f"interrupted:{session_id}", "0")
         return (
             "NOTE: They just cut you off / started talking while you were still "
             "speaking. React naturally and briefly to being interrupted (e.g. "
-            "\"oh — sorry, go ahead\") before responding to what they said."
+            "\"oh - sorry, go ahead\") before responding to what they said."
         )
     return None
 
@@ -2095,7 +2095,7 @@ async def _run_call_turn(ws: WebSocket, msg: dict, cancel: asyncio.Event):
         memories,
         mode="call",
         # Calls were missing CAPABILITY_MANIFEST + her day-state note that
-        # text/WhatsApp both get — she could confidently claim "reminder set"
+        # text/WhatsApp both get - she could confidently claim "reminder set"
         # on a call with no guard to catch it, or reference a "day" that
         # contradicted what she'd already texted an hour earlier.
         extra_notes=_relationship_notes(CAPABILITY_MANIFEST, day_note,
@@ -2189,7 +2189,7 @@ async def _run_greeting(ws: WebSocket, session_id: str, cancel: asyncio.Event):
             "in ONE short sentence, happy they called. STRICT RULES: do not claim "
             "you were just doing something; do not invent any activity, event, or "
             "detail. Only mention a specific thing if it appears in your memories "
-            "or the recent conversation above — otherwise just a simple warm hello "
+            "or the recent conversation above - otherwise just a simple warm hello "
             "that fits the current time of day. Do not mention this note."
         ),
     }
@@ -2234,7 +2234,7 @@ async def ws_call(ws: WebSocket):
                 pass
 
     async def _run_turn_safe(coro) -> None:
-        """gen_task is fire-and-forget (only awaited on the NEXT barge-in) —
+        """gen_task is fire-and-forget (only awaited on the NEXT barge-in) -
         without this, any exception here (Ollama hiccup, STT/TTS error, etc.)
         vanished silently and left the client stuck in "listening" forever
         with no reply_end/error frame ever sent. Always tell the client."""
@@ -2272,7 +2272,7 @@ async def ws_call(ws: WebSocket):
                 continue
 
             if mtype in ("user_text", "user_audio"):
-                # A turn can arrive without a start_call (defensive) — make sure
+                # A turn can arrive without a start_call (defensive) - make sure
                 # the GPU is prepped for RVC either way.
                 if not call_gpu_on:
                     call_gpu_on = True
@@ -2387,7 +2387,7 @@ class WhatsAppMedia(BaseModel):
 
 _CANT_SEE_PHOTOS = [
     "aww i can't see pics on here yet 😭 what is it?",
-    "ugh my phone's being weird with photos rn — describe it to me??",
+    "ugh my phone's being weird with photos rn - describe it to me??",
     "can't open pics on this thing 😩 tell me what it is!",
 ]
 
@@ -2395,7 +2395,7 @@ _CANT_SEE_PHOTOS = [
 async def _caption_image(data_b64: str) -> str | None:
     """One-line description via a local vision model (Ollama; config
     tools.vision.model, default 'moondream'). Returns None if that model
-    isn't pulled/available — callers fall back to an honest deflection,
+    isn't pulled/available - callers fall back to an honest deflection,
     never a guess about what's in the photo."""
     model = ((state.settings.raw or {}).get("tools", {}).get("vision", {})
             .get("model", "moondream"))
@@ -2403,19 +2403,19 @@ async def _caption_image(data_b64: str) -> str | None:
         raw = await state.llm.chat(
             messages=[{"role": "user",
                       "content": "Describe this photo in one short, plain sentence "
-                                 "— just what's actually in it.",
+                                 "- just what's actually in it.",
                       "images": [data_b64]}],
             model=model, options={"temperature": 0.2},
         )
         return raw.strip() or None
     except Exception as e:  # noqa: BLE001 - model not pulled, Ollama error, etc.
-        logger.info("vision captioning unavailable (%s) — deflecting", e)
+        logger.info("vision captioning unavailable (%s) - deflecting", e)
         return None
 
 
 @app.post("/whatsapp/incoming-media")
 async def whatsapp_incoming_media(body: WhatsAppMedia):
-    """A WhatsApp photo or voice note — turned into a normal (synthetic) text
+    """A WhatsApp photo or voice note - turned into a normal (synthetic) text
     message and handed to the SAME pipeline as /whatsapp/incoming, so
     routing/guards/stickers/voice-roll/multi-bubble all apply for free."""
     if body.kind == "voice":
@@ -2441,13 +2441,13 @@ async def whatsapp_incoming_media(body: WhatsAppMedia):
                     "audio_url": None, "sticker_path": None, "sticker_url": None,
                     "emotion": "neutral"}
         caption_suffix = f" {body.caption}" if body.caption else ""
-        synthetic = f"[sent a photo — looks like: {description}]{caption_suffix}"
+        synthetic = f"[sent a photo - looks like: {description}]{caption_suffix}"
     return await whatsapp_incoming(WhatsAppIncoming(text=synthetic))
 
 
 _CALL_EXCUSES = [
     "ahh I can't pick up on here 😭 call me on our app??",
-    "nooo I missed you — whatsapp calls don't work for me, use our app? 🥺",
+    "nooo I missed you - whatsapp calls don't work for me, use our app? 🥺",
     "can't answer calls on here!! open the app and call me there 💕",
     "omg I saw you calling 😩 I can only talk on our app, come there?",
 ]
@@ -2475,7 +2475,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
     # Parity with web chat: exchange_count only used to increment here on
     # webapp_chat, so offer-throttling gaps and _pattern_note's cadence were
     # computed on a counter that never moved for a WhatsApp-heavy user, and
-    # _offer_note was never even called below — she could offer on web but
+    # _offer_note was never even called below - she could offer on web but
     # never on WhatsApp.
     db.set_setting("exchange_count",
                    str(int(db.get_setting("exchange_count") or 0) + 1))
@@ -2529,7 +2529,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
         day_note = await state.daylife.prompt_note()
     except Exception:  # noqa: BLE001
         pass
-    # Ask for the trailing emotion tag — it drives sticker choice, then gets
+    # Ask for the trailing emotion tag - it drives sticker choice, then gets
     # stripped before anything is stored or sent.
     system_prompt = build_system_prompt(
         state.persona,
@@ -2552,7 +2552,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
         # as web chat (previously WhatsApp only stripped violating sentences
         # with no regeneration attempt, so a caught violation still shipped).
         # Overall cap: _guarded_reply can be TWO chat calls (generate +
-        # guard-retry) — under a stalled GPU that's 2x the httpx timeout
+        # guard-retry) - under a stalled GPU that's 2x the httpx timeout
         # serially before the fallback would fire. 90s total is far beyond
         # any healthy generation.
         reply, emotion = await asyncio.wait_for(
@@ -2563,7 +2563,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
         # three 120s LLM ReadTimeouts -> three 502s -> "??" / "are you
         # there?"). A short in-character "phone's acting up" line keeps her
         # present; the moment the box recovers, normal replies resume.
-        logger.exception("WhatsApp reply generation failed — sending laggy-phone line")
+        logger.exception("WhatsApp reply generation failed - sending laggy-phone line")
         text = random.choice(_LAGGY_PHONE)
         db.add_message(session_id, "assistant", text, source="whatsapp")
         return {"mode": "text", "text": text, "texts": [text], "wav_path": None,
@@ -2587,7 +2587,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
     db.set_setting("last_reply_had_sticker", "1" if sticker_path else "0")
 
     # --- persist: one row per bubble (unless sticker-only), then a sticker row ---
-    # Same "texted twice" split as web chat (_split_bubbles) — a blank line
+    # Same "texted twice" split as web chat (_split_bubbles) - a blank line
     # in her reply means she'd genuinely have sent 2-3 separate messages.
     bubbles = [] if sticker_only else _split_bubbles(reply)
     message_id = None
@@ -2599,10 +2599,10 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
         _spawn(state.memory.extract_and_store(combined, reply, source="whatsapp"))
 
     # --- voice-note roll (text replies only; only the LAST bubble gets a
-    # voice note — TTS-ing every short bubble in a multi-part text would be
+    # voice note - TTS-ing every short bubble in a multi-part text would be
     # excessive, and a voice note as the final word is the natural shape) ---
     # A reply carrying a real link (e.g. the zomato_suggest tool's Zomato
-    # search URL) must never be read aloud — a spoken URL is meaningless and
+    # search URL) must never be read aloud - a spoken URL is meaningless and
     # the link itself would be lost. Those replies always stay text.
     has_link = "http://" in reply or "https://" in reply
     wav_path = None
@@ -2616,7 +2616,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
         try:
             speak = strip_for_speech(bubbles[-1])
             if speak:
-                # Her cloned voice (studio + RVC) first — this used to go
+                # Her cloned voice (studio + RVC) first - this used to go
                 # straight to plain Kokoro and never even tried the trained
                 # voice, so every WhatsApp voice note sounded like the
                 # default stock voice regardless of RVC/XTTS being set up.
@@ -2640,7 +2640,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
                     )
                     if len(result.samples) > 0:
                         # The Kokoro fallback must still pass through RVC so
-                        # the voice note is HER voice — calls and /tts already
+                        # the voice note is HER voice - calls and /tts already
                         # did this, but this path shipped raw stock Kokoro,
                         # so every WhatsApp voice note while XTTS couldn't
                         # load (VRAM) came out in the wrong voice.
@@ -2666,7 +2666,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
     return {
         "mode": mode,
         "text": "" if sticker_only else (bubbles[-1] if bubbles else reply),
-        # Every bubble in order — the bridge sends each as its own WhatsApp
+        # Every bubble in order - the bridge sends each as its own WhatsApp
         # message with a pause between; a single-bubble reply is just a
         # one-element list, so this replaces `text` as the send source.
         "texts": bubbles,
@@ -2789,7 +2789,7 @@ async def voice_bench(body: BenchRequest):
     for emo in body.emotions:
         for i, line in enumerate(sentences):
             entry = {"emotion": emo, "line": i}
-            # Kokoro (+ optional RVC) — the call voice.
+            # Kokoro (+ optional RVC) - the call voice.
             res = await asyncio.to_thread(state.tts.synth, line)
             samples, sr = res.samples, res.sample_rate
             if vcfg.get("call_voice") == "kokoro_rvc" and state.rvc.available:
@@ -2797,7 +2797,7 @@ async def voice_bench(body: BenchRequest):
             p = bench_dir / f"call_{emo}_{i}.wav"
             sf.write(p, samples, sr)
             entry["call_url"] = f"/media/bench/{p.name}"
-            # Studio clone — the voice-note voice.
+            # Studio clone - the voice-note voice.
             if out["studio_available"]:
                 try:
                     from app.gpu_queue import PRIORITY_BENCH
@@ -2907,7 +2907,7 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
-# Static media (TTS wavs, avatars) — mounted before the SPA catch-all.
+# Static media (TTS wavs, avatars) - mounted before the SPA catch-all.
 # ---------------------------------------------------------------------------
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
@@ -2925,7 +2925,7 @@ if FRONTEND_DIST.exists():
     logger.info("Serving frontend from %s", FRONTEND_DIST)
 else:
     logger.warning(
-        "Frontend build not found at %s — run `npm --prefix frontend install && "
+        "Frontend build not found at %s - run `npm --prefix frontend install && "
         "npm --prefix frontend run build`. API still available.",
         FRONTEND_DIST,
     )

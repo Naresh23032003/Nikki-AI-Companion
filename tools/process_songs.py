@@ -1,4 +1,4 @@
-"""PART 1 — Song processing: Demucs two-stem separation of her singing.
+"""PART 1 - Song processing: Demucs two-stem separation of her singing.
 
     python tools/process_songs.py [--device cuda|cpu]
 
@@ -87,7 +87,7 @@ def main() -> int:
 
     print("\n" + "=" * 62)
     print("LISTEN CHECK before training: quiet instrumental residue in gaps")
-    print("is fine; audible keyboard UNDER her voice is not — drop those files.")
+    print("is fine; audible keyboard UNDER her voice is not - drop those files.")
     if flagged:
         print("LOW-confidence outputs (listen to these first):")
         for f in flagged:

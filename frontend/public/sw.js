@@ -1,7 +1,7 @@
 // Minimal service worker for installability + offline app shell.
 // Only known-static paths are ever cached; every other same-origin request
 // (all API endpoints) goes straight to the network. The old version kept a
-// blocklist of API prefixes instead — /relationship, /journal, /day-state
+// blocklist of API prefixes instead - /relationship, /journal, /day-state
 // etc. weren't on it, so their FIRST response was cached and served stale
 // forever (the "stats never update / journal looks empty" bug).
 
@@ -56,7 +56,7 @@ self.addEventListener('fetch', (event) => {
   const isStatic =
     STATIC_PREFIXES.some((p) => url.pathname.startsWith(p)) ||
     STATIC_FILES.includes(url.pathname)
-  if (!isStatic) return // live data (API) — never intercepted, never cached
+  if (!isStatic) return // live data (API) - never intercepted, never cached
 
   // Hashed static assets: cache-first (they're immutable per build).
   event.respondWith(

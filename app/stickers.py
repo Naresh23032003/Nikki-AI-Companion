@@ -1,7 +1,7 @@
 """Sticker library: pick a sticker file matching an emotion / intent.
 
 Drop WebP/PNG stickers into stickers/<kind>/ at the project root. Empty folders
-are simply skipped — the system degrades to text-only until art exists.
+are simply skipped - the system degrades to text-only until art exists.
 """
 from __future__ import annotations
 

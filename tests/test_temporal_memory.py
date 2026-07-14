@@ -7,7 +7,7 @@ from app.memory import MemoryStore
 
 class EventKindNormalizationTests(unittest.TestCase):
     """A resolved event_datetime must promote a mislabeled dated event to
-    'event' (so it renders upcoming/past and ages out) — WITHOUT flipping
+    'event' (so it renders upcoming/past and ages out) - WITHOUT flipping
     yearly-recurring (birthday/anniversary) or genuine recurring facts.
     Regression guard for the bug where extractor-resolved dates were nulled
     because the fact text dropped the time word."""

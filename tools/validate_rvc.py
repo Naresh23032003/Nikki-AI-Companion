@@ -53,9 +53,9 @@ def main() -> int:
         sf.write(OUT / "vocal_after.wav", converted, sr)
         print(f"vocal snippet: converted in {ms:.0f}ms")
     else:
-        print("no song_vocals yet — run tools/process_songs.py for the vocal test")
+        print("no song_vocals yet - run tools/process_songs.py for the vocal test")
 
-    print(f"\nlisten to the pairs in {OUT} — 'after' should be unmistakably her.")
+    print(f"\nlisten to the pairs in {OUT} - 'after' should be unmistakably her.")
     return 0
 
 

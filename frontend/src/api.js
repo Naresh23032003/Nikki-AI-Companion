@@ -1,8 +1,8 @@
-// Thin API client. Same-origin relative URLs — the FastAPI server hosts both
+// Thin API client. Same-origin relative URLs - the FastAPI server hosts both
 // the API and these static files in production; Vite proxies them in dev.
 
 // LAN auth: when the server has COMPANION_AUTH_TOKEN set, non-localhost
-// clients must send it. Open the PWA once as http://<host>:8000/?token=XYZ —
+// clients must send it. Open the PWA once as http://<host>:8000/?token=XYZ -
 // it's remembered in localStorage and attached to every request after that.
 const urlToken = new URLSearchParams(location.search).get('token')
 if (urlToken) localStorage.setItem('companion_token', urlToken)

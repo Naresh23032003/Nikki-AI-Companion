@@ -1,4 +1,4 @@
-"""CONSENT WITHDRAWAL — delete EVERYTHING derived from her recordings.
+"""CONSENT WITHDRAWAL - delete EVERYTHING derived from her recordings.
 
     python cleanup_voice.py           # lists what will be deleted, asks once
     python cleanup_voice.py --yes     # no prompt
@@ -6,7 +6,7 @@
 Removes: raw recordings, separated vocals, the RVC dataset and trained model,
 emotion reference clips, all rendered studio audio, benches, and song covers.
 Irreversible by design. If the person whose voice this is ever withdraws
-consent, run this — no partial keeping.
+consent, run this - no partial keeping.
 """
 import argparse
 import shutil
@@ -32,7 +32,7 @@ def main() -> int:
 
     existing = [t for t in TARGETS if t.exists()]
     if not existing:
-        print("nothing to delete — already clean.")
+        print("nothing to delete - already clean.")
         return 0
 
     print("This will PERMANENTLY delete everything derived from her voice:")
@@ -42,7 +42,7 @@ def main() -> int:
     if not args.yes:
         answer = input("\ntype DELETE to confirm: ").strip()
         if answer != "DELETE":
-            print("aborted — nothing deleted.")
+            print("aborted - nothing deleted.")
             return 1
 
     for t in existing:

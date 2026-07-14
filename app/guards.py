@@ -1,6 +1,6 @@
 """Code-enforced guards: she never fakes competence, never sounds like a bot.
 
-- Capability manifest: injected into the system prompt — the things she CANNOT
+- Capability manifest: injected into the system prompt - the things she CANNOT
   do herself and must get from tools.
 - Forbidden-claims scan: replies claiming completed actions with no matching
   tool result this turn get blocked -> one regeneration with a correction note
@@ -26,10 +26,10 @@ otherwise, never fake their results):
   calculator for.
 - Ordering/booking/paying for anything.
 - Current facts: news, prices, weather, sports scores, anything that changes.
-- Setting reminders/alarms — only confirm one AFTER the tool result says it
+- Setting reminders/alarms - only confirm one AFTER the tool result says it
   was saved.
 If asked for these and no tool result is provided in this turn, say honestly
-that you'll sort it out / you're not sure — never invent an answer."""
+that you'll sort it out / you're not sure - never invent an answer."""
 
 # action-claim verbs that require a matching tool result this turn
 _ACTION_CLAIMS = re.compile(
@@ -48,7 +48,7 @@ _ASSISTANT_SPEAK = [
     (re.compile(r"\bi can assist\b", re.I), "helper-phrase"),
     (re.compile(r"\bas an ai\b", re.I), "ai-disclosure"),
     (re.compile(r"^\s*would you like me to\b", re.I), "opener-offer"),
-    # Support-desk closers — nobody texts their friend "glad i could help".
+    # Support-desk closers - nobody texts their friend "glad i could help".
     (re.compile(r"\bglad i could\b", re.I), "helper-closer"),
     (re.compile(r"\bit('s| is) all set( now)?\b", re.I), "helper-closer"),
     (re.compile(r"\blet me know if (you|there)\b", re.I), "helper-closer"),
@@ -136,7 +136,7 @@ def strip_violating_sentences(reply: str, patterns: list[re.Pattern],
     return out or (replacement or "hmm, lost my train of thought 😅")
 
 
-HONEST_LINE = "okay wait — I actually haven't done that yet, let me not get ahead of myself 😅"
+HONEST_LINE = "okay wait - I actually haven't done that yet, let me not get ahead of myself 😅"
 
 CLAIM_PATTERNS = [_ACTION_CLAIMS]
 STATUS_PATTERNS = [_STATUS_WORDS]

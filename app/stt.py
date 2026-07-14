@@ -1,7 +1,7 @@
 """Speech-to-text via faster-whisper (small, int8).
 
 Lazy-loaded so importing this module never requires the model or the package to
-be present — the endpoints degrade gracefully with a clear message if STT isn't
+be present - the endpoints degrade gracefully with a clear message if STT isn't
 installed. Uses the GPU (CUDA, int8) when available and falls back to CPU.
 
 VRAM: whisper-small int8 is ~0.5 GB, chosen so it can coexist with llama3.2:3b
@@ -77,14 +77,14 @@ class STTEngine:
         """(device, compute_type): CUDA int8 if available AND there's headroom,
         else CPU int8. whisper-small int8 needs ~0.5GB; if the GPU is already
         near-full (Ollama + XTTS render in flight), loading it there would OOM
-        someone else — CPU int8 transcribes a short utterance fine."""
+        someone else - CPU int8 transcribes a short utterance fine."""
         try:
             import torch
             if torch.cuda.is_available():
                 free, _total = torch.cuda.mem_get_info()
                 if free / 1e9 >= 1.0:
                     return "cuda", "int8"
-                logger.info("STT: only %.1fGB VRAM free — using CPU", free / 1e9)
+                logger.info("STT: only %.1fGB VRAM free - using CPU", free / 1e9)
         except Exception:  # noqa: BLE001
             pass
         return "cpu", "int8"

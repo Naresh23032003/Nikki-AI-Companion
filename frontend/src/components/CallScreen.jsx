@@ -71,7 +71,7 @@ export default function CallScreen({ persona, sessionId, onEnd }) {
         </button>
       </div>
       <div className="call-hint">
-        {call.micReady ? 'Just talk — tap the mic to mute' : 'Allow microphone to talk'}
+        {call.micReady ? 'Just talk - tap the mic to mute' : 'Allow microphone to talk'}
       </div>
     </div>
   )
