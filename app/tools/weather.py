@@ -48,9 +48,9 @@ async def execute(args: dict, ctx: ToolContext) -> dict:
         return {"ok": True, "result": (
             f"weather in {place}: {cur.get('temperature_2m')}°C now "
             f"(feels {cur.get('apparent_temperature')}°C), {label} "
-            f"{day_min}–{day_max}°C, rain chance {rain_p}%")}
+            f"{day_min}-{day_max}°C, rain chance {rain_p}%")}
     return {"ok": True, "result": (
-        f"forecast for {place} {label}: {day_min}–{day_max}°C, rain chance {rain_p}%")}
+        f"forecast for {place} {label}: {day_min}-{day_max}°C, rain chance {rain_p}%")}
 
 
 TOOL = Tool(
@@ -59,7 +59,7 @@ TOOL = Tool(
     parameters={
         "city": {"type": "string", "description": "City name (optional, defaults to their home city)"},
         "day": {"type": "string", "enum": ["today", "tomorrow"],
-                "description": "Which day's forecast — defaults to today"},
+                "description": "Which day's forecast - defaults to today"},
     },
     required=[],
     execute=execute,

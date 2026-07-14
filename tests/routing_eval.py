@@ -78,7 +78,7 @@ ROUTING_CASES = [
     ("suggest me something good to eat tonight", "tool:zomato_suggest"),
     ("can you recommend a restaurant nearby", "tool:zomato_suggest"),
     # --- REGRESSION: real requests typed WITHOUT a trailing '?' (extremely
-    # common in casual chat) must still reach layer 2 — is_request() used to
+    # common in casual chat) must still reach layer 2 - is_request() used to
     # require a literal '?' for the interrogative branch, which silently
     # demoted these to "mention-or-smalltalk" at layer 1 and they never even
     # reached the tool-calling model. (found via live chat: "what's the
@@ -96,10 +96,10 @@ ROUTING_CASES = [
     ("how was pilates", "chat"),
     # --- REGRESSION: a short leading filler word before the real ask
     # ("Nice, what's the weather like") must not defeat the anchored checks
-    # above — found in the same live-chat audit. ---
+    # above - found in the same live-chat audit. ---
     ("Nice, what's the weather like", "tool:weather"),
     # --- REGRESSION: "tomorrow"/"today" leading a real question must not be
-    # swallowed either ("tomorrow will it rain" got misrouted to chat) — but
+    # swallowed either ("tomorrow will it rain" got misrouted to chat) - but
     # the same leading word before a plain STATEMENT must still stay a
     # mention, since "tomorrow"/"today" routinely start ordinary sentences
     # that aren't requests at all. ---
@@ -133,7 +133,7 @@ def main() -> int:
         r = router.pre_route(msg)
         got = "ambiguous" if r is None else (f"tool:{r.tool}" if r.kind == "tool" else r.kind)
         # An ambiguous result is acceptable ONLY if the expectation isn't chat
-        # (mentions must be caught deterministically — that's the hard rule).
+        # (mentions must be caught deterministically - that's the hard rule).
         ok = got == expected or (got == "ambiguous" and expected != "chat")
         if ok:
             passed += 1

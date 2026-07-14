@@ -1,7 +1,7 @@
-"""zomato_suggest: SUGGESTION only — there is no public Zomato ordering API.
+"""zomato_suggest: SUGGESTION only - there is no public Zomato ordering API.
 Returns a dish/restaurant idea plus a Zomato search deep link. Never claims an
 order was placed. Config-gated: tools.zomato.enabled (default true; no auth,
-no API key — it's just a search URL)."""
+no API key - it's just a search URL)."""
 from __future__ import annotations
 
 from urllib.parse import quote
@@ -30,7 +30,7 @@ TOOL = Tool(
     name="zomato_suggest",
     description=("Use when the user asks what to eat, wants a food/restaurant "
                 "suggestion, or asks you to recommend a dish. Suggests a dish or "
-                "restaurant with a Zomato search link — suggestion only, cannot "
+                "restaurant with a Zomato search link - suggestion only, cannot "
                 "place orders."),
     parameters={"dish": {"type": "string", "description": "craving or dish name, if mentioned"}},
     required=[],

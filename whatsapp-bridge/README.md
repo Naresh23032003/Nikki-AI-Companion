@@ -4,7 +4,7 @@ Connects the companion backend to WhatsApp so she can text (and send voice
 notes) on a real WhatsApp number, and so your WhatsApp messages flow through
 the same persona + memory pipeline as the web app.
 
-## ⚠️ Read this first
+## Read this first
 
 - **This uses `whatsapp-web.js`, an UNOFFICIAL WhatsApp client.** WhatsApp's
   terms prohibit automation, and **accounts using unofficial clients can be
@@ -35,7 +35,7 @@ node index.js
 WA_TARGET=919876543210 node index.js
 ```
 
-On first run a **QR code** prints in the terminal — scan it from the
+On first run a **QR code** prints in the terminal - scan it from the
 companion's phone (WhatsApp → Linked devices). LocalAuth persists the session
 in `.wwebjs_auth/`, so subsequent runs log in automatically.
 
@@ -45,13 +45,13 @@ in `.wwebjs_auth/`, so subsequent runs log in automatically.
 |---|---|
 | You → her | Your WhatsApp texts POST to the backend (`/whatsapp/incoming`); the reply comes back through the same persona + memory pipeline (session `main`, shared with the web app) |
 | Her → you | Replies are sent as text, or (~30%, `whatsapp.voice_reply_ratio` in `config.yaml`) as a **real voice note** (Kokoro WAV → opus via ffmpeg → `sendAudioAsVoice`) |
-| You call her on WhatsApp | The bridge **cannot answer calls** — it auto-rejects, logs `Missed WhatsApp call` into shared history, stores a memory ("he tried to call me…"), and texts you an in-character excuse pointing you to the app's Call mode |
+| You call her on WhatsApp | The bridge **cannot answer calls** - it auto-rejects, logs `Missed WhatsApp call` into shared history, stores a memory ("he tried to call me…"), and texts you an in-character excuse pointing you to the app's Call mode |
 | Proactive | The backend's scheduler pushes her check-in texts through `POST /send-text` |
 
 ## Environment variables
 
 | Var | Default | Meaning |
 |---|---|---|
-| `WA_TARGET` | — (required) | Your personal number, digits only with country code |
+| `WA_TARGET` | - (required) | Your personal number, digits only with country code |
 | `BACKEND_URL` | `http://localhost:8000` | Companion backend |
 | `PORT` | `3001` | Bridge HTTP port (localhost only) |

@@ -16,7 +16,7 @@ function Ticks({ status }) {
 }
 
 // webapp_chat is the default channel: no marker at all. Other sources get a
-// tiny colored dot next to the timestamp + a faint edge accent — visible if
+// tiny colored dot next to the timestamp + a faint edge accent - visible if
 // you look, invisible if you don't.
 const SOURCE_META = {
   webapp_call: { label: 'Voice call', color: '#a78bfa' },

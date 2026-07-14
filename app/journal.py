@@ -1,12 +1,12 @@
 """Passive daily mood journal: she infers the USER's moods from the day's
-conversations and logs them — never by asking, never with surveys.
+conversations and logs them - never by asking, never with surveys.
 
 Three jobs:
   - Nightly extraction (config: journal.nightly_time, default 23:45): pulls
     every message from every source (web chat/call/WhatsApp/tablet/iot) for
     the local calendar day just ending, and asks the LOCAL model to pull out
-    mood entries grounded in concrete evidence (this data is intimate — never
-    sent to the cloud brain). Quiet/flat days correctly yield 0-1 entries —
+    mood entries grounded in concrete evidence (this data is intimate - never
+    sent to the cloud brain). Quiet/flat days correctly yield 0-1 entries -
     the evidence rule below forbids filling rows. This is the ONLY step that
     needs a model: turning raw conversation into structured mood rows.
   - Nightly streak check (run_recent_streak_check, chained after extraction):
@@ -14,11 +14,11 @@ Three jobs:
   - Weekly pattern-awareness (config: journal.weekly_pattern_day/time,
     default Sunday 23:55): recurring cross-week patterns stored as
     category="relationship" "Pattern:" memories, referenced naturally later
-    (never as a report/stats-speak — see app/main.py's _pattern_note).
+    (never as a report/stats-speak - see app/main.py's _pattern_note).
 
 The streak + pattern layers are PURE CODE (no model): they run over rows that
 are already structured (date, mood_label, intensity, why), so it's counting
-and grouping — deterministic, unit-testable, zero hallucination risk. The
+and grouping - deterministic, unit-testable, zero hallucination risk. The
 stored sentences are plain and factual on purpose: she rephrases them in her
 own voice at reference time anyway (the _pattern_note/_streak_note prompt
 notes), so model-written prose here bought nothing but failure modes.
@@ -40,7 +40,7 @@ _SOURCE_LABELS = {
 
 _EXTRACTION_SYSTEM = """\
 You are inferring the USER's moods for one day from their conversations with \
-their companion, for a private mood journal. Be STRICT and conservative — it \
+their companion, for a private mood journal. Be STRICT and conservative - it \
 is much better to log nothing than to invent a feeling that wasn't there.
 
 EVIDENCE RULE (hard requirement):
@@ -48,20 +48,20 @@ EVIDENCE RULE (hard requirement):
   concrete thing that happened in the conversation that day. `why` must
   reference that concrete evidence in one short sentence.
 - NEVER fabricate or guess a mood just to fill in the day. A quiet, flat, or
-  purely logistical day means 0 or 1 entries — that is the CORRECT output,
+  purely logistical day means 0 or 1 entries - that is the CORRECT output,
   not a failure.
-- Only log entries about the USER's own mood/feelings — never the
+- Only log entries about the USER's own mood/feelings - never the
   companion's, never a mood merely mentioned about a third person.
 - If the user's mood clearly shifted during the day (e.g. stressed in the
-  afternoon, relieved by night), log multiple entries — one per genuine
+  afternoon, relieved by night), log multiple entries - one per genuine
   shift, each with its own time and evidence.
 - `time` is your best estimate of when that mood showed, in 24h HH:MM local
   time, based on the message timestamps given.
 - `intensity` is 1-5 (1 = mild, 5 = very strong), judged from the user's own
-  words/tone — do not default to a fixed number.
+  words/tone - do not default to a fixed number.
 - `mood_label` is a short single word/phrase (e.g. "happy", "stressed",
   "anxious", "content", "lonely", "excited", "frustrated", "tired",
-  "hopeful", "overwhelmed", "grateful", "hurt", "proud", "bored") — pick
+  "hopeful", "overwhelmed", "grateful", "hurt", "proud", "bored") - pick
   whatever plain word actually fits; do not force it into a fixed list if
   none fit well.
 - `source_channel` is whichever channel that evidence came from (given per
@@ -72,7 +72,7 @@ Respond with STRICT JSON only: {"entries": [{"time": "HH:MM", "mood_label": \
 If there is no real evidence of any mood that day: {"entries": []}"""
 
 # ---------------------------------------------------------------------------
-# Programmatic mood classification (pattern/streak layer — no model involved)
+# Programmatic mood classification (pattern/streak layer - no model involved)
 # ---------------------------------------------------------------------------
 # The extraction prompt suggests plain single-word labels but doesn't force a
 # fixed list, so classify by lexicon + a stem fallback. Unknown labels count
@@ -195,7 +195,7 @@ async def run_nightly_extraction(db, llm, settings, day_offset: int = -1) -> int
     messages = db.messages_between(start_utc, end_utc)
     user_said_something = any(m["role"] == "user" for m in messages)
     if not user_said_something:
-        logger.info("journal: nightly %s — no user messages, nothing to extract", date_label)
+        logger.info("journal: nightly %s - no user messages, nothing to extract", date_label)
         return 0
 
     transcript = _transcript_for(messages)
@@ -209,7 +209,7 @@ async def run_nightly_extraction(db, llm, settings, day_offset: int = -1) -> int
             format="json", model=model, options={"temperature": 0.2},
             # Batch job, not a live reply: a full day's transcript through a
             # bigger model (plus the model swap) blows the 120s client
-            # default — a busy day timed out and simply never got extracted.
+            # default - a busy day timed out and simply never got extracted.
             timeout=600.0,
             # Unload the 8B immediately after this one-off job. With the
             # global 2h keep_alive it sat in VRAM past midnight and starved
@@ -219,7 +219,7 @@ async def run_nightly_extraction(db, llm, settings, day_offset: int = -1) -> int
         )
         data = json.loads(raw)
     except Exception as e:  # noqa: BLE001 - a failed nightly run must never crash the scheduler
-        # %r, not %s — httpx.ReadTimeout stringifies to "", which logged an
+        # %r, not %s - httpx.ReadTimeout stringifies to "", which logged an
         # empty reason and made timeouts undiagnosable.
         logger.warning("journal: nightly extraction failed for %s: %r", date_label, e)
         return 0
@@ -228,7 +228,7 @@ async def run_nightly_extraction(db, llm, settings, day_offset: int = -1) -> int
     for entry in entries:
         db.add_mood_entry(date_label, entry["time"], entry["mood_label"],
                           entry["intensity"], entry["why"], entry["source_channel"])
-    logger.info("journal: nightly %s — stored %d entr%s", date_label, len(entries),
+    logger.info("journal: nightly %s - stored %d entr%s", date_label, len(entries),
                "y" if len(entries) == 1 else "ies")
     return len(entries)
 
@@ -236,7 +236,7 @@ async def run_nightly_extraction(db, llm, settings, day_offset: int = -1) -> int
 def _weekday_pattern(neg_by_date: dict[str, list[dict]]) -> str | None:
     """Recurring low weekday: the same weekday negative on 2+ distinct dates.
     Two occurrences of the same weekday are, by definition, in different
-    calendar weeks — so this can never fire on a single bad Mon-Tue-Wed
+    calendar weeks - so this can never fire on a single bad Mon-Tue-Wed
     stretch (the original complaint about the model-based version)."""
     by_weekday: dict[int, list[tuple[str, dict]]] = {}
     for d, day_entries in neg_by_date.items():
@@ -282,14 +282,14 @@ def _persistent_mood_pattern(neg_by_date: dict[str, list[dict]],
             best = (label, dates)
     if best is None:
         return None
-    return f"They've been feeling {best[0]} a lot lately — it's come up on several different days"
+    return f"They've been feeling {best[0]} a lot lately - it's come up on several different days"
 
 
 def _trend_pattern(neg_by_date: dict[str, list[dict]], today) -> str | None:
     """Clearly harder (or clearly lighter) recent fortnight vs the one before.
 
     The "harder lately" branch additionally requires the recent negative days
-    to span 2+ distinct calendar weeks — one rough Mon-Tue-Wed is the streak
+    to span 2+ distinct calendar weeks - one rough Mon-Tue-Wed is the streak
     check's job (flagged within days), not a weekly trend; without this it
     re-reported exactly the single-bad-week evidence every detector here is
     supposed to reject."""
@@ -311,13 +311,13 @@ async def run_weekly_patterns(db, memory, settings=None, lookback_days: int = 30
 
     Pure code over structured rows (see module docstring): weekday recurrence,
     persistent mood, and fortnight trend. Every detector requires evidence
-    spanning 2+ distinct calendar weeks, so a single bad day — or one bad
-    Mon-Tue-Wed week — can never register as a "pattern". The stored text is
+    spanning 2+ distinct calendar weeks, so a single bad day - or one bad
+    Mon-Tue-Wed week - can never register as a "pattern". The stored text is
     deliberately plain: she phrases it warmly in-voice at reference time."""
     since = (datetime.now().date() - timedelta(days=lookback_days)).isoformat()
     entries = db.list_mood_entries(since_date=since)
     if len(entries) < 5:
-        logger.info("journal: weekly pass — only %d entries in %dd, skipping", len(entries), lookback_days)
+        logger.info("journal: weekly pass - only %d entries in %dd, skipping", len(entries), lookback_days)
         return 0
 
     neg_by_date = _negative_entries_by_date(entries)
@@ -341,29 +341,29 @@ async def run_weekly_patterns(db, memory, settings=None, lookback_days: int = 30
         memory_id = await memory.add_fact(f"Pattern: {text}", "relationship", source="mood_journal")
         if memory_id is not None:
             stored += 1
-    logger.info("journal: weekly pass — stored %d pattern(s): %s", stored, texts[:3])
+    logger.info("journal: weekly pass - stored %d pattern(s): %s", stored, texts[:3])
     return stored
 
 
 async def run_recent_streak_check(db, memory, settings=None, lookback_days: int = 3) -> bool:
-    """Short-window check (default: last 3 days) for a CURRENT rough streak —
+    """Short-window check (default: last 3 days) for a CURRENT rough streak -
     distinct from run_weekly_patterns' long-term, cross-week pattern check.
-    Runs nightly (chained right after run_nightly_extraction — see main.py's
+    Runs nightly (chained right after run_nightly_extraction - see main.py's
     _run_nightly_journal) so a Mon-Tue-Wed rough stretch is available to
     reference starting Thursday, instead of sitting unmentioned until it
     happens to recur weeks later on the Sunday weekly pass.
 
     Pure code (see module docstring): a streak = negative-mood entries on 2+
     distinct days within the window. The stored sentence is plain and factual
-    — she rephrases it warmly in her own voice at reference time.
+    - she rephrases it warmly in her own voice at reference time.
 
     Stored as a one-shot 'Streak: ...' memory: consumed (deleted) the first
     time she brings it up (app/main.py's _streak_note), unlike a genuine
-    Pattern: which stays referenceable indefinitely — a rough few days is a
+    Pattern: which stays referenceable indefinitely - a rough few days is a
     point-in-time thing to check in on once, not an enduring trait.
     """
     # Don't stack a second streak note while one's still waiting to be
-    # brought up — the overlapping 3-day windows would otherwise re-flag the
+    # brought up - the overlapping 3-day windows would otherwise re-flag the
     # same rough days again every single night until it's referenced.
     existing = [m for m in db.list_memories_by_category("relationship")
                if (m.get("fact") or "").startswith("Streak:")]
@@ -383,8 +383,8 @@ async def run_recent_streak_check(db, memory, settings=None, lookback_days: int 
     strongest = max(neg_entries, key=lambda e: int(e.get("intensity") or 0))
     why = (strongest.get("why") or "").strip().rstrip(".")[:140]
     text = (f"They've seemed {label_str} on {len(neg_by_date)} of the last "
-            f"{lookback_days} days" + (f" — most recently: {why}" if why else ""))
+            f"{lookback_days} days" + (f" - most recently: {why}" if why else ""))
 
     memory_id = await memory.add_fact(f"Streak: {text}", "relationship", source="mood_journal")
-    logger.info("journal: streak check — flagged %r (memory #%s)", text, memory_id)
+    logger.info("journal: streak check - flagged %r (memory #%s)", text, memory_id)
     return memory_id is not None

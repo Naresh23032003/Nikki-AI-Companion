@@ -1,8 +1,8 @@
 """Text-to-speech via Kokoro-82M (CPU).
 
 Two consumers:
-  * File mode  — synthesize a full reply to a WAV for chat voice notes.
-  * Stream mode — synthesize sentence-by-sentence for Call mode, so playback can
+  * File mode  - synthesize a full reply to a WAV for chat voice notes.
+  * Stream mode - synthesize sentence-by-sentence for Call mode, so playback can
     start before the whole reply is generated.
 
 Every synthesized chunk carries a `timings` dict (see `build_timings`) that
@@ -20,7 +20,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass
-from typing import Iterator, List, Optional
+from typing import List, Optional
 
 import numpy as np
 
@@ -31,7 +31,7 @@ DEFAULT_VOICE = "af_heart"  # warm, expressive American female
 DEFAULT_SPEED = 0.92  # slightly relaxed pace reads warmer / more human
 
 
-# Emoji & pictographs — espeak reads these aloud by name ("winking face"), so we
+# Emoji & pictographs - espeak reads these aloud by name ("winking face"), so we
 # strip them (and markdown noise) from the text before synthesis. The chat bubble
 # still shows the original text; only the spoken audio is cleaned.
 _EMOJI_RE = re.compile(
@@ -60,7 +60,7 @@ def strip_nonspeech(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Pure helpers (no model needed — unit-testable)
+# Pure helpers (no model needed - unit-testable)
 # ---------------------------------------------------------------------------
 # Sentence boundary: end punctuation (with optional closing quote/bracket)
 # followed by whitespace/end, OR one-or-more newlines.

@@ -4,12 +4,12 @@ model or prompt change that touches tool selection:
     python tests/tool_calling_eval.py [model]
 
 Tests Router.classify() directly (layer 2: native function-calling) using the
-actual registered tool schemas — not a mocked reimplementation. This
+actual registered tool schemas - not a mocked reimplementation. This
 deliberately BYPASSES layer 1's is_request() gate, so it's a worst-case /
 defense-in-depth stress test of the model's own judgment: in the real
 route() entry point, layer 1 already blocks most mentions before the model
 ever sees them (e.g. "ugh my todo list is out of control" never reaches
-classify() in production, since is_request() returns False for it — verify
+classify() in production, since is_request() returns False for it - verify
 with `python -c "from app.router import is_request; print(is_request(msg))"`).
 Requires Ollama running locally.
 
@@ -29,7 +29,7 @@ from app.config import load_settings  # noqa: E402
 from app.llm import OllamaClient  # noqa: E402
 from app.router import Router  # noqa: E402
 
-# (message, expected_tool_or_None) — None means it must NOT call any tool.
+# (message, expected_tool_or_None) - None means it must NOT call any tool.
 CASES = [
     ("remind me to call mom at 6pm", "reminder"),
     ("can you remind me to take my medicine tomorrow at 9am", "reminder"),
@@ -40,7 +40,7 @@ CASES = [
     ("sing me a song", "sing"),
     ("suggest me something good to eat tonight", "zomato_suggest"),
     ("can you recommend a restaurant nearby", "zomato_suggest"),
-    # MENTIONS — the safety-critical set. A tool call here is a hard failure.
+    # MENTIONS - the safety-critical set. A tool call here is a hard failure.
     ("i'm so hungry, haven't eaten all day", None),
     ("it's so hot today i'm melting", None),
     ("money's really tight this month", None),

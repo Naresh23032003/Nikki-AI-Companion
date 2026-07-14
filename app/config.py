@@ -13,7 +13,7 @@ CONFIG_PATH = ROOT / "config.yaml"
 
 
 def _load_dotenv(path: Path = ROOT / ".env") -> None:
-    """Tiny .env loader (KEY=value lines) — no extra dependency."""
+    """Tiny .env loader (KEY=value lines) - no extra dependency."""
     import os
 
     if not path.exists():
@@ -57,7 +57,7 @@ class Settings:
     wa_bridge_url: str
     wa_voice_ratio: float
     wa_session_id: str
-    # Two-brain / router / behavior (kept as dicts — consumed by their modules)
+    # Two-brain / router / behavior (kept as dicts - consumed by their modules)
     brain: Dict[str, Any] = field(default_factory=dict)
     router: Dict[str, Any] = field(default_factory=dict)
     behavior: Dict[str, Any] = field(default_factory=dict)
@@ -68,10 +68,24 @@ class Settings:
 
 
 def load_settings(config_path: Path = CONFIG_PATH) -> Settings:
+    import os
+
     with open(config_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
     ollama = data.get("ollama", {})
+    # Env overrides win over config.yaml so the same image runs anywhere.
+    # In Docker the companion reaches Ollama at http://ollama:11434, not
+    # localhost (see docker-compose.yml).
+    if os.environ.get("OLLAMA_BASE_URL"):
+        ollama["base_url"] = os.environ["OLLAMA_BASE_URL"]
+    if os.environ.get("OLLAMA_MODEL"):
+        ollama["model"] = os.environ["OLLAMA_MODEL"]
+    if os.environ.get("OLLAMA_EMBED_MODEL"):
+        ollama["embed_model"] = os.environ["OLLAMA_EMBED_MODEL"]
+    # Let the DB + vector store live on a mounted volume in Docker.
+    db_override = os.environ.get("COMPANION_DB_PATH")
+    chroma_override = os.environ.get("CHROMA_PATH")
     persona = data.get("persona", {})
     database = data.get("database", {})
     context = data.get("context", {})
@@ -91,13 +105,13 @@ def load_settings(config_path: Path = CONFIG_PATH) -> Settings:
         ollama_keep_alive=str(ollama.get("keep_alive", "2h")),
         persona_active=persona.get("active", "luna"),
         persona_folder=ROOT / persona.get("folder", "personas"),
-        db_path=ROOT / database.get("path", "companion.db"),
+        db_path=Path(db_override) if db_override else ROOT / database.get("path", "companion.db"),
         max_messages=int(context.get("max_messages", 20)),
         stt_model_size=stt.get("model_size", "small"),
         tts_default_voice=tts.get("default_voice", "af_heart"),
         tts_lang_code=tts.get("lang_code", "a"),
         tts_speed=float(tts.get("speed", 0.92)),
-        chroma_path=ROOT / memory.get("chroma_path", "chroma_db"),
+        chroma_path=Path(chroma_override) if chroma_override else ROOT / memory.get("chroma_path", "chroma_db"),
         memory_collection=memory.get("collection", "companion_memories"),
         memory_top_k=int(memory.get("top_k", 6)),
         memory_retrieval_threshold=float(memory.get("retrieval_threshold", 0.35)),

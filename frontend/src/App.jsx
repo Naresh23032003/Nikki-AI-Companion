@@ -141,7 +141,7 @@ export default function App() {
       const wait = typingDelay(reply) - elapsed
       if (wait > 0) await sleep(wait)
 
-      // Text bubble only. Chat is text; her voice lives in Call mode — so we
+      // Text bubble only. Chat is text; her voice lives in Call mode - so we
       // never send a duplicate text + voice-note pair here.
       appendMessage({
         id: 'r' + Date.now(),

@@ -1,17 +1,33 @@
-# Voice system extras.
-# Base torch 2.12+cu126, torchaudio, torchcodec, demucs: already installed.
+# Voice extras: install ON TOP of requirements.txt for voice notes, the
+# hold-to-talk mic, and Call mode:
+#
+#   pip install -r requirements.txt -r requirements-voice.txt
+#
+# All of these are lazy-imported: without them the app still boots and runs
+# text chat + memory; only the /stt, /tts and /ws/call endpoints report that
+# voice is unavailable.
 
-# PART 3 — studio TTS (XTTS-v2, installed via:)
+# Speech-to-text (Whisper small, int8, GPU/CPU) and text-to-speech (Kokoro-82M,
+# CPU). Kokoro pulls torch; faster-whisper pulls ctranslate2.
+faster-whisper==1.2.1
+kokoro==0.9.4
+soundfile==0.14.0       # WAV encoding for TTS output
+av==18.0.0              # audio decoding (webm/opus) for STT
+# Note: kokoro needs espeak-ng installed on the system for phonemization.
+#   Windows: install espeak-ng (github.com/espeak-ng/espeak-ng/releases)
+#   macOS:   brew install espeak-ng
+#   Linux:   apt-get install espeak-ng
+# GPU STT also needs CUDA + cuDNN (via a CUDA-enabled PyTorch); CPU works without.
+
+# --- Her real cloned voice (optional, see docs/RVC_TRAINING.md) --------------
+# Studio TTS (XTTS-v2) for rendered voice notes:
 #   pip install coqui-tts
-#   pip install torchaudio  (matching your installed torch build/version)
 #   pip install torchcodec==0.14.0
-#   pip install "transformers==4.56.2"  # coqui-tts 0.27.5 pulls transformers
-#     5.x by default, which removed `isin_mps_friendly` that XTTS imports —
-#     pin to 4.56.2 or it fails at import time, not at call time.
-coqui-tts
-
-# PART 2/4/5 — RVC inference: rvc-python is BROKEN on Python 3.12 (fairseq/
-# distutils). Instead, RVC runs as a warm worker inside the Applio env:
-#   applio/env/Scripts/python.exe tools/rvc_server.py     (port 3002)
-# Training is fully headless too:
-#   applio/env/Scripts/python.exe tools/train_rvc_headless.py
+#   pip install "transformers==4.56.2"  # coqui-tts 0.27.5 defaults to
+#     transformers 5.x, which removed `isin_mps_friendly` that XTTS imports at
+#     import time, pin to 4.56.2 or it fails on load.
+#
+# RVC inference (real-time call timbre) runs as a warm worker inside the Applio
+# env (rvc-python is broken on Python 3.12 / fairseq / distutils):
+#   applio/env/Scripts/python.exe tools/rvc_server.py            (port 3002)
+#   applio/env/Scripts/python.exe tools/train_rvc_headless.py    (training)

@@ -1,4 +1,4 @@
-"""PART 2 — RVC dataset prep: gold speech + separated vocals -> rvc_dataset/.
+"""PART 2 - RVC dataset prep: gold speech + separated vocals -> rvc_dataset/.
 
     python tools/prepare_rvc_dataset.py            # voice/ + song_vocals/
     python tools/prepare_rvc_dataset.py --trim-silver path/  # silver helper
@@ -108,7 +108,7 @@ def main() -> int:
                 total_s += len(piece) / SR
                 n += 1
     print(f"\nwrote {n} clips ({total_s / 60:.1f} min) to {OUT}")
-    print("next: docs/RVC_TRAINING.md — train in Applio, export to voices/rvc/nikki")
+    print("next: docs/RVC_TRAINING.md - train in Applio, export to voices/rvc/nikki")
     return 0
 
 

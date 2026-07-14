@@ -10,7 +10,7 @@ particle effects (hearts/sparkles).
 
 IMPORTANT: models sometimes emit emotions outside our set ("curious",
 "concerned", …) or add tags even in chat mode (by imitation). So the stripping
-matches ANY `{"emotion": "<word>"}` tag and unknown values collapse to neutral —
+matches ANY `{"emotion": "<word>"}` tag and unknown values collapse to neutral -
 that way a stray tag never leaks into a text bubble, a voice note, or history.
 """
 from __future__ import annotations
@@ -27,14 +27,14 @@ EMOTION_TAG_INSTRUCTION = """\
 At the VERY END of your reply, append your current emotion as a JSON tag on its
 own, exactly like: {"emotion": "happy"}
 Allowed values: happy, laughing, shy, sad, surprised, neutral, love.
-This tag is silent metadata — never reference it or say it out loud."""
+This tag is silent metadata - never reference it or say it out loud."""
 
 # Matches an emotion tag with ANY word value (not just the allowed set) so stray
 # emotions are still stripped. Quoting/spacing is flexible.
 _EMO_ANY = re.compile(r'\{\s*"?emotion"?\s*:\s*"?([A-Za-z_]+)"?\s*\}', re.IGNORECASE)
 
 # Small models sometimes emit the tag WITHOUT braces ('... for now! "emotion":
-# "shy"'), which the brace-matching regex misses — that leaked verbatim into a
+# "shy"'), which the brace-matching regex misses - that leaked verbatim into a
 # WhatsApp bubble. Requiring the QUOTED key keeps this from ever touching a
 # genuine sentence that happens to contain the word emotion.
 _EMO_BARE = re.compile(r'["“]emotion["”]\s*:\s*["“]?([A-Za-z_]+)["”]?',
@@ -44,13 +44,13 @@ _EMO_BARE = re.compile(r'["“]emotion["”]\s*:\s*["“]?([A-Za-z_]+)["”]?',
 _TRAILING_JSON = re.compile(r'\{[^{}]*\}\s*$')
 
 # Small models imitate stage-direction fragments like "{love}" / "{morning}" /
-# "{yeah, it's nice}" once one appears in history. Strip any short brace group —
+# "{yeah, it's nice}" once one appears in history. Strip any short brace group -
 # nobody texts literal {braces}.
 _BRACE_FRAGMENT = re.compile(r'\{[^{}]{0,60}\}')
 
 # Roleplay-style action asides like "*checks*" / "*giggles*" / "*hugs you*"
 # read as pure bot; strip short single-asterisk fragments too. (Losing a rare
-# *emphasis* word is an acceptable trade — actions are far more common.)
+# *emphasis* word is an acceptable trade - actions are far more common.)
 _ASTERISK_FRAGMENT = re.compile(r'\*[^*\n]{1,40}\*')
 
 

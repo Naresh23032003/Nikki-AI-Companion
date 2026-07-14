@@ -88,7 +88,7 @@ export default function MoodJournal({ onClose }) {
               </select>
             </div>
             <div className="hint" style={{ marginTop: 8 }}>
-              She quietly notices patterns in your day from your conversations — never surveys, never asks.
+              She quietly notices patterns in your day from your conversations - never surveys, never asks.
             </div>
           </section>
 

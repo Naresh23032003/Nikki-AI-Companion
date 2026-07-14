@@ -4,7 +4,7 @@ Scenario:
   1. In session A, have a short conversation that mentions a birthday and a
      favorite food.
   2. Wait for background fact-extraction to persist those memories.
-  3. Start a fresh session B and ask about both — verify the companion recalls
+  3. Start a fresh session B and ask about both - verify the companion recalls
      the birthday and the favorite food.
 
 Requires the server running (see README) with Ollama up and both models pulled:
@@ -79,7 +79,7 @@ def main() -> None:
     session_b = f"mem-test-b-{int(time.time())}"
 
     print("=" * 60)
-    print("PHASE 1 — conversation that drops facts to remember")
+    print("PHASE 1 - conversation that drops facts to remember")
     print("=" * 60)
     send(f"hey! just so you know, my birthday is {BIRTHDAY} 🎂", session_a)
     send(f"also i'm obsessed with {FAVORITE_FOOD}, could eat it every day", session_a)
@@ -90,9 +90,9 @@ def main() -> None:
     show_memories()
 
     print("\n" + "=" * 60)
-    print("PHASE 2 — brand new session; does she remember?")
+    print("PHASE 2 - brand new session; does she remember?")
     print("=" * 60)
-    r1 = send("quick — do you remember when my birthday is?", session_b)
+    r1 = send("quick - do you remember when my birthday is?", session_b)
     r2 = send("and what's that food i can't get enough of?", session_b)
 
     print("\n" + "=" * 60)

@@ -16,7 +16,7 @@ ollama:
   # card to 5.9GB used with ~50MB free, which starved every concurrent Ollama
   # call (502s / ReadTimeouts) whenever TTS also needed VRAM. qwen was also
   # re-verified disqualified as the CHAT/ROUTER model regardless (hallucinates
-  # tool calls on pure mentions — tests/tool_calling_eval.py). One resident
+  # tool calls on pure mentions - tests/tool_calling_eval.py). One resident
   # model keeps headroom for XTTS/RVC.
   extract_model: "huihui_ai/llama3.2-abliterate:3b"
   # Sampling options passed through to Ollama.
@@ -25,7 +25,7 @@ ollama:
     top_p: 0.9
   # How long Ollama keeps models resident after a call. The 5m default meant
   # every idle gap paid a full cold reload on the next message (>1s just for
-  # the embedding model — the "retrieve_memories SLOW" spikes). With ONE
+  # the embedding model - the "retrieve_memories SLOW" spikes). With ONE
   # resident chat/extract model (~2.55GB) + nomic-embed (~0.32GB) there's
   # comfortable headroom left in 6GB for TTS/RVC too.
   keep_alive: "2h"
@@ -43,7 +43,7 @@ database:
 
 context:
   # How many of the most recent messages to feed back into the model.
-  # (Long-term memory supplements this — see the `memory` section.)
+  # (Long-term memory supplements this - see the `memory` section.)
   max_messages: 20
 
 stt:
@@ -57,7 +57,7 @@ tts:
   # Kokoro language pack: 'a' = American English, 'b' = British English.
   lang_code: "a"
   # Speaking pace. Slightly under 1.0 sounds more relaxed/human; raise toward
-  # 1.0 for a snappier delivery. Range ~0.8–1.2.
+  # 1.0 for a snappier delivery. Range ~0.8-1.2.
   speed: 0.92
 
 memory:
@@ -87,7 +87,7 @@ voice:
   # Minimum free VRAM (MB) required to load the studio engine on the GPU.
   # XTTS-v2 needs ~3.4GB; loading it into a fuller card silently spills to
   # shared system memory and stalls EVERYTHING on the GPU (Ollama chat
-  # included — measured: render RTF 24x, chat ReadTimeouts, she went silent).
+  # included - measured: render RTF 24x, chat ReadTimeouts, she went silent).
   # Below this headroom she falls back to Kokoro+RVC (still her voice).
   studio_min_free_vram_mb: 3800
   # Abandon a studio render after this many seconds (healthy = 10-30s) and
@@ -102,7 +102,7 @@ voice:
 
 # Two-brain architecture: Nikki (local) + a cloud "big brain" for complex work.
 brain:
-  cloud_enabled: true            # master switch — off = fully local
+  cloud_enabled: true            # master switch - off = fully local
   providers:                     # tried in order; keys live in .env
     - name: groq
       enabled: true
@@ -140,12 +140,12 @@ behavior:
   quiet_hours: "01:00-07:30"     # she's 'asleep'
 
 # Passive daily mood journal: nightly local-only extraction of the user's
-# mood from that day's conversations (all sources). Never asks — only infers
+# mood from that day's conversations (all sources). Never asks - only infers
 # from concrete evidence. See app/journal.py + README "Mood journal".
 journal:
   enabled: true
   # Nightly extraction is a one-off batch job, not a live user-facing reply,
-  # so latency doesn't matter — only quality does. llama3.2:3b (the main chat
+  # so latency doesn't matter - only quality does. llama3.2:3b (the main chat
   # model) under-extracts nuance and risks inventing feelings on quiet days;
   # llama3.1:8b (already pulled) follows the evidence rule far more reliably
   # and correctly returns 0 entries on flat days. Ollama swaps models on
@@ -155,14 +155,14 @@ journal:
   nightly_time: "23:45"          # HH:MM local, when the day's extraction runs
   weekly_pattern_day: "sun"      # day-of-week the pattern-awareness pass runs
   weekly_pattern_time: "23:55"   # HH:MM local
-  # Google Sheets sync is intentionally NOT implemented yet — SQLite
+  # Google Sheets sync is intentionally NOT implemented yet - SQLite
   # (mood_journal table) is the only store for now.
 
 tools:
   vision:
     # Local Ollama vision model for captioning incoming WhatsApp photos
     # (`ollama pull moondream`, ~1.7GB). If not pulled, she honestly says she
-    # can't see pics yet instead of guessing — never a silent failure.
+    # can't see pics yet instead of guessing - never a silent failure.
     model: "moondream"
 
 whatsapp:

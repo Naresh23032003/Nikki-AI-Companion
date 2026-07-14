@@ -50,13 +50,13 @@ export default function InputBar({ onSend, disabled }) {
       rec.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop())
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        if (blob.size < 800) return // too short — ignore accidental taps
+        if (blob.size < 800) return // too short - ignore accidental taps
         setTranscribing(true)
         try {
           const res = await api.stt(blob)
           const spoken = (res?.text || '').trim()
           if (spoken) onSend(spoken) // send the transcribed message straight away
-          else flash("Didn't catch that — try again.")
+          else flash("Didn't catch that - try again.")
         } catch (err) {
           flash(
             err.message === 'STT_NOT_AVAILABLE'

@@ -1,5 +1,5 @@
 // Encode a Float32 PCM buffer (as produced by the VAD) into a 16-bit WAV, then
-// base64 — the server's faster-whisper decodes WAV fine via PyAV.
+// base64 - the server's faster-whisper decodes WAV fine via PyAV.
 
 export function float32ToWav(float32, sampleRate = 16000) {
   const len = float32.length

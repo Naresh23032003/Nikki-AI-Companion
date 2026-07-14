@@ -16,7 +16,7 @@
 //   BACKEND_URL   companion backend (default http://localhost:8000)
 //   PORT          bridge HTTP port (default 3001)
 //
-// See README.md — this uses an unofficial client; use a second number.
+// See README.md - this uses an unofficial client; use a second number.
 
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js')
 const qrcode = require('qrcode-terminal')
@@ -70,7 +70,7 @@ client.on('disconnected', (reason) => {
 // voice note in return). Shared by the text path and the media path below.
 // ---------------------------------------------------------------------------
 async function deliverReply(reply, chat) {
-  // Human-ish typing delay proportional to TOTAL reply length (capped) —
+  // Human-ish typing delay proportional to TOTAL reply length (capped) -
   // texts is every bubble she'd send (see app/persona.py's "texted twice"
   // rule); a single-bubble reply is just a one-element array.
   const texts = (reply.texts && reply.texts.length ? reply.texts : [reply.text]).filter(Boolean)
@@ -87,7 +87,7 @@ async function deliverReply(reply, chat) {
   }
   if (reply.mode === 'voice' && reply.wav_path && fs.existsSync(reply.wav_path)) {
     // The voice note IS the last bubble (spoken). Any earlier bubbles still
-    // go out as text first — dropping them lost real content ("she only
+    // go out as text first - dropping them lost real content ("she only
     // sends voice messages") whenever a multi-bubble reply rolled voice.
     for (let i = 0; i < texts.length - 1; i++) {
       await client.sendMessage(TARGET_CHAT, texts[i])
@@ -123,11 +123,11 @@ async function deliverReply(reply, chat) {
 // (WA_DEBOUNCE_MS without a new message) send the whole batch to the
 // backend for ONE reply. Escape hatches: urgent-looking messages flush
 // immediately, and a burst can never wait longer than WA_DEBOUNCE_MAX_MS
-// total — a real person jumps in eventually too.
+// total - a real person jumps in eventually too.
 // ---------------------------------------------------------------------------
 const DEBOUNCE_MS = parseInt(process.env.WA_DEBOUNCE_MS || '9000', 10)
 const DEBOUNCE_MAX_MS = parseInt(process.env.WA_DEBOUNCE_MAX_MS || '30000', 10)
-// Mirrors the backend's _URGENT regex — an urgent message must never sit
+// Mirrors the backend's _URGENT regex - an urgent message must never sit
 // in the buffer waiting for a quiet period.
 const URGENT = /\b(urgent|emergency|help me|asap|right now|crying|scared|panic|hurt|hospital)\b|!{2,}/i
 
@@ -144,7 +144,7 @@ async function flushPending() {
   firstPendingAt = 0
   try {
     const chat = await client.getChatById(TARGET_CHAT)
-    // She "starts typing" only now — showing the indicator during the whole
+    // She "starts typing" only now - showing the indicator during the whole
     // debounce window would look like she's typing while you still are.
     chat.sendStateTyping().catch(() => {})
     const res = await fetch(`${BACKEND}/whatsapp/incoming`, {
@@ -220,7 +220,7 @@ client.on('message', async (msg) => {
 // ---------------------------------------------------------------------------
 client.on('call', async (call) => {
   try {
-    console.log(`[call] incoming ${call.isVideo ? 'video' : 'voice'} call — rejecting`)
+    console.log(`[call] incoming ${call.isVideo ? 'video' : 'voice'} call - rejecting`)
     await call.reject()
     const res = await fetch(`${BACKEND}/whatsapp/call-rejected`, { method: 'POST' })
     const { text } = res.ok
@@ -245,7 +245,7 @@ client.on('call', async (call) => {
 // install locations before falling back to PATH lookup.
 const FFMPEG_CANDIDATES = [
   process.env.FFMPEG_PATH,
-  'ffmpeg', // ambient PATH — works if this shell has it
+  'ffmpeg', // ambient PATH - works if this shell has it
   `${process.env.USERPROFILE || ''}\\anaconda3\\Library\\bin\\ffmpeg.exe`,
   `${process.env.USERPROFILE || ''}\\miniconda3\\Library\\bin\\ffmpeg.exe`,
   'C:\\ffmpeg\\bin\\ffmpeg.exe',
@@ -362,7 +362,7 @@ function sleep(ms) {
 
 // Path allowlist for /send-voice and /send-sticker: these endpoints have no
 // auth (the bridge binds 127.0.0.1, trusting anything local), but they used
-// to accept ANY absolute path and read+send it over WhatsApp — any local
+// to accept ANY absolute path and read+send it over WhatsApp - any local
 // process could exfiltrate arbitrary files on disk that way. Legitimate
 // callers only ever pass paths under these three directories.
 const PROJECT_ROOT = path.resolve(__dirname, '..')

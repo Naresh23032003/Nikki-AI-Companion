@@ -43,7 +43,7 @@ VALID_CATEGORIES = {
 
 _EXTRACTION_SYSTEM = """\
 You extract durable, long-term facts about the USER from one exchange between \
-the user and their companion. Be STRICT and conservative — it is much better to \
+the user and their companion. Be STRICT and conservative - it is much better to \
 record nothing than to record something wrong.
 
 HARD RULES:
@@ -51,10 +51,10 @@ HARD RULES:
 - NEVER infer, guess, assume, or extrapolate. If it isn't clearly stated, skip it.
 - NEVER attribute the COMPANION's life to the user. If the companion said "I
   live near the coast", that is NOT a fact about the user. If the user only
-  asked a question ("where do you live?"), there is no fact — return [].
+  asked a question ("where do you live?"), there is no fact - return [].
 - NEVER record that the user said yes/no/ok, agreed, greeted, or asked for
   something in the moment (stickers, photos). Those are not memories.
-- Possessives matter: "your cat", "your job" = the COMPANION's — never store the
+- Possessives matter: "your cat", "your job" = the COMPANION's - never store the
   companion's pets/life as the user's. Only "my cat", "my job" are the user's.
 - For `event_datetime`: resolve relative times ("at 12", "tomorrow", "tonight")
   against the "Current local datetime" line provided, and output full ISO-8601
@@ -62,7 +62,7 @@ HARD RULES:
   day is stated. Never invent a date that wasn't implied.
 - If the user DENIES or corrects something ("I am not a student"), never store
   the denied thing as a fact. Store the correction instead, if it's durable.
-- IGNORE everything the companion said — especially the companion's questions,
+- IGNORE everything the companion said - especially the companion's questions,
   guesses, suggestions, or offers (e.g. if the companion asks "want me to bring
   leftovers?", that is NOT a fact about the user).
 - IGNORE small talk, greetings, acknowledgements ("hi", "good", "ok", "lol"),
@@ -78,7 +78,7 @@ HARD RULES:
 
 Also rate `affection_delta`: how much this single exchange should move her
 affection for the user, as an integer from -2 to +2:
-- 0  = ordinary small talk / logistics — THE DEFAULT for most exchanges.
+- 0  = ordinary small talk / logistics - THE DEFAULT for most exchanges.
 - +1 = genuinely warm, personal, vulnerable, or supportive moment.
 - +2 = exceptional: a deep conversation, real openness, something that matters.
 - -1 = cold, dismissive, or hurtful toward her.
@@ -102,7 +102,7 @@ class MemoryStore:
         # conversation warmth nudges her intra-day mood (see app/dayseed.py).
         self.daylife = None
         # Entity names that must never enter the graph (persona's own name is
-        # added by main at startup/persona switch — her cat isn't YOUR cat).
+        # added by main at startup/persona switch - her cat isn't YOUR cat).
         self.blocked_names: set[str] = set()
 
         self._client = chromadb.PersistentClient(
@@ -137,7 +137,7 @@ class MemoryStore:
         if category not in VALID_CATEGORIES:
             category = "personal_info"
 
-        # Small models emit junk strings instead of JSON null — normalize them
+        # Small models emit junk strings instead of JSON null - normalize them
         # (a literal "now"/"null" valid_until made facts silently unretrievable).
         def _clean_dt(v):
             if isinstance(v, str) and v.strip().lower() in {"", "null", "none", "now", "n/a", "unknown"}:
@@ -196,7 +196,7 @@ class MemoryStore:
         )
         logger.info("Stored new memory #%s [%s]: %r", memory_id, category, fact)
         # A freshly-stored dated event gets a care check-in scheduled around
-        # it (see _schedule_event_followup) — read the row back since kind/
+        # it (see _schedule_event_followup) - read the row back since kind/
         # event_datetime may have been normalized by db.add_memory.
         row = self.db.get_memory(memory_id)
         if row and (row.get("kind") or "").lower() == "event":
@@ -350,7 +350,7 @@ class MemoryStore:
             return datetime.now(timezone.utc) <= valid_until
         if kind == "event":
             # A completed/dismissed event (valid_until in the past) stops being
-            # injected immediately — this is what "mark completed" sets.
+            # injected immediately - this is what "mark completed" sets.
             valid_until = cls._parse_datetime(row.get("valid_until"))
             event_dt = cls._parse_datetime(row.get("event_datetime"))
             if valid_until is not None and datetime.now(timezone.utc) > valid_until:
@@ -359,7 +359,7 @@ class MemoryStore:
             if event_dt is None:
                 return True
             # Stay current for 7 days AFTER the event so she can reference it in
-            # past tense ("how did the exam go") — then it ages out of injection.
+            # past tense ("how did the exam go") - then it ages out of injection.
             return datetime.now(timezone.utc) <= event_dt + timedelta(days=7)
         if kind == "recurring":
             valid_until = cls._parse_datetime(row.get("valid_until"))
@@ -428,7 +428,7 @@ class MemoryStore:
                         seen.add(mid_int)
                         ordered.append((mid_int, self._format_memory_for_prompt(row)))
         except asyncio.TimeoutError:
-            logger.warning("Memory retrieval: embed timed out — semantic search skipped")
+            logger.warning("Memory retrieval: embed timed out - semantic search skipped")
         except Exception as e:  # noqa: BLE001 - retrieval must never break chat
             logger.warning("Memory retrieval failed: %s", e)
 
@@ -514,13 +514,13 @@ class MemoryStore:
     ) -> None:
         """Extract durable facts from one exchange and store them."""
         # Pre-gate: don't even ask the LLM about trivial messages ("yup", "ok",
-        # "hello") — small models hallucinate facts rather than return empty.
+        # "hello") - small models hallucinate facts rather than return empty.
         if not self._worth_extracting(user_message):
             logger.debug("Extraction skipped (trivial message): %r", user_message)
             return
 
         # The model needs a clock to resolve relative times ("exam at 12",
-        # "tomorrow") into real datetimes — without it, dates are hallucinated.
+        # "tomorrow") into real datetimes - without it, dates are hallucinated.
         now_local = datetime.now().astimezone()
         exchange = (
             f"Current local datetime: {now_local.isoformat()} ({now_local:%A})\n"
@@ -565,7 +565,7 @@ class MemoryStore:
                                                         trigger_text=user_message)
             except Exception as e:  # noqa: BLE001 - never let this break extraction
                 logger.warning("Affection update failed: %s", e)
-            # Same signal nudges her intra-day mood (see DayLife.apply_drift) —
+            # Same signal nudges her intra-day mood (see DayLife.apply_drift) -
             # this was computed but never wired anywhere, so her mood was
             # frozen at the morning seed all day regardless of how the
             # conversation actually went.
@@ -589,7 +589,7 @@ class MemoryStore:
         text = user_message.strip()
         if len(text) < 15 or len(text.split()) < 4:
             return False
-        # Short questions carry no durable facts — extracting from them is how
+        # Short questions carry no durable facts - extracting from them is how
         # "what is my cat name?" became "User has a cat". Long mixed messages
         # (question + statements) still pass.
         if text.endswith("?") and len(text.split()) < 12:
@@ -733,7 +733,7 @@ class MemoryStore:
             valid_until = it.get("valid_until") or None
             if kind == "recurring" and not (recurrence_rule or "").strip():
                 # The extractor tags one-off items 'recurring' surprisingly
-                # often ("User needs to call mom") — and recurring memories
+                # often ("User needs to call mom") - and recurring memories
                 # without a valid_until never expire, so a finished errand
                 # kept resurfacing in her replies for days. No recurrence
                 # rule => it is not recurring: make it an event that ages out.

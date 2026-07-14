@@ -1,6 +1,6 @@
 # Training her RVC voice model (Applio, RTX 3060 6GB)
 
-The RVC model is her **timbre** — it powers real-time calls (Kokoro→RVC) and
+The RVC model is her **timbre** - it powers real-time calls (Kokoro→RVC) and
 singing covers.
 
 ## Fully headless (recommended)
@@ -28,7 +28,7 @@ python tools/process_songs.py           # separate singing from keyboard
 # LISTEN to the flagged files, delete any with audible keyboard under her voice
 python tools/prepare_rvc_dataset.py     # gold speech + song vocals -> rvc_dataset/
 ```
-Aim for **20+ minutes** total; 45–60 min is the sweet spot.
+Aim for **20+ minutes** total; 45-60 min is the sweet spot.
 
 ## 1. Install Applio
 
@@ -49,10 +49,10 @@ one-click zip). Run `run-applio.bat` → opens the web UI.
 - Extract → wait
 
 **Train tab**
-- Sample rate 40k, batch size: **4** (raise to 6–8 only if VRAM allows —
+- Sample rate 40k, batch size: **4** (raise to 6-8 only if VRAM allows -
   watch Task Manager; OOM = lower it)
-- Epochs: **300** (sweet spot is usually 200–400 for ~30 min of data;
-  save-every 50 and audition checkpoints — stop when test conversions stop
+- Epochs: **300** (sweet spot is usually 200-400 for ~30 min of data;
+  save-every 50 and audition checkpoints - stop when test conversions stop
   improving; overtraining sounds metallic)
 - Pretrained: keep defaults; "Save only latest" ON to spare disk
 - Train, then **Generate index** when done
@@ -82,5 +82,5 @@ set back to `kokoro_raw`.
 - **Bronze clips** (speech over music/noise): run them through
   `tools/process_songs.py` first (same Demucs flow), listen-check, then
   include the survivors the same way. Retrain with the bigger dataset for a
-  quality bump — same settings, fresh model name (`nikki_v2`), and update
+  quality bump - same settings, fresh model name (`nikki_v2`), and update
   `voice.rvc_model_dir` when you're happy.

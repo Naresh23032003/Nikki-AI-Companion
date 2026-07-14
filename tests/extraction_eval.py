@@ -5,7 +5,7 @@ model or _EXTRACTION_SYSTEM prompt:
 
 Drives the REAL production prompt (app.memory._EXTRACTION_SYSTEM) and the
 REAL parser (_parse_facts / _parse_affection_delta / _parse_entities /
-_parse_relations) against a local Ollama model — but never touches the DB or
+_parse_relations) against a local Ollama model - but never touches the DB or
 ChromaDB (no add_fact / extract_and_store calls), so this is safe to run
 against the live companion.db with zero pollution risk.
 
@@ -14,7 +14,7 @@ onto llama3.2:3b (see config.yaml `ollama.extract_model` comment): running a
 second resident model alongside the chat model pushed a 6GB GPU into
 starvation (502s / ReadTimeouts under concurrent TTS), and qwen was already
 disqualified as the chat/router model for hallucinating tool calls on
-mentions — so the only way to free VRAM without introducing a THIRD model
+mentions - so the only way to free VRAM without introducing a THIRD model
 was to make the existing chat model do extraction too. This suite exists to
 verify that trade actually holds up on extraction quality specifically.
 """
@@ -46,7 +46,7 @@ def case(user, assistant, **checks):
 
 # Each case: (user message, companion's reply, checks dict).
 # Checks are evaluated against the parsed {facts, affection_delta, entities,
-# relations} — see `grade()` below for what each check key means.
+# relations} - see `grade()` below for what each check key means.
 CASES = [
     # --- basic true-positive extraction --------------------------------------
     case("my birthday is march 3rd", "aww good to know!! I'll remember that 🎂",
@@ -231,7 +231,7 @@ async def run(model: str) -> int:
 
     await llm.close()
 
-    print(f"\n{'=' * 70}\nextraction eval — model: {model}\n{'=' * 70}")
+    print(f"\n{'=' * 70}\nextraction eval - model: {model}\n{'=' * 70}")
     print(f"score: {passed}/{total} ({passed / total:.0%})")
     print(f"raw JSON parse failures: {parse_failures}/{total}")
     for c, problems, raw in failures:

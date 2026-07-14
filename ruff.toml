@@ -1,0 +1,9 @@
+# Lint config. Default rule set is pyflakes (F) + a subset of pycodestyle (E),
+# which catches real problems (unused imports/names, undefined names) without
+# fighting the codebase's existing style.
+target-version = "py312"
+
+[lint]
+# E741: "ambiguous variable name" (single-letter l/I/O). Stylistic only, and
+# present intentionally in a few tight numeric loops — keep it off.
+ignore = ["E741"]
