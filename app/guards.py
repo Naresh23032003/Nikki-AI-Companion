@@ -43,6 +43,22 @@ _HONEYPOTS = re.compile(
     r"\b(breaking|announced today|just released|latest version is)\b|"
     r"\bit('s| is) (\d+|-?\d+\.?\d*)\s?°", re.I)
 
+# model-level refusals leaking through - a stock-aligned model (local or cloud
+# brain) snapping into assistant-mode mid-roleplay. This is the single most
+# illusion-breaking failure mode ("I cannot create explicit content. Is there
+# anything else I can help you with?") and none of the other scans catch it,
+# so it needs its own dedicated detector rather than folding into
+# _ASSISTANT_SPEAK's softer helper-phrase patterns.
+_REFUSAL = re.compile(
+    r"\bi('m| am) (not able|unable) to\b|"
+    r"\bi (can'?t|cannot) (create|generate|write|help|assist|produce|provide|continue)\b|"
+    r"\bas an ai\b|\bas a language model\b|\bi'?m an ai\b|\bi'?m just an ai\b|"
+    r"\bi don'?t have the (ability|capability) to\b|"
+    r"\bthis (content|request) (violates|goes against)\b|"
+    r"\bi'?m sorry,? but\b|\bi apologize,? but\b|"
+    r"\banything else i can help you with\b|\bhow (can|may) i (help|assist) you\b|"
+    r"\bi'?m not comfortable\b|\bi must decline\b", re.I)
+
 _ASSISTANT_SPEAK = [
     (re.compile(r"\bhow can i (help|assist)\b", re.I), "helper-phrase"),
     (re.compile(r"\bi can assist\b", re.I), "helper-phrase"),
@@ -84,6 +100,16 @@ def scan_forbidden_claims(reply: str, tool_ran: bool, db=None) -> list[str]:
     if hits:
         _bump(db, "forbidden_claim")
         logger.warning("guard: forbidden action-claims %s in %r", hits, reply[:80])
+    return hits
+
+
+def scan_refusal(reply: str, db=None) -> list[str]:
+    """Model snapped into assistant-mode and refused - never tool-gated,
+    this can happen on any turn regardless of whether a tool ran."""
+    hits = [m.group(0) for m in _REFUSAL.finditer(reply)]
+    if hits:
+        _bump(db, "refusal")
+        logger.warning("guard: refusal leak %s in %r", hits, reply[:80])
     return hits
 
 
@@ -137,9 +163,11 @@ def strip_violating_sentences(reply: str, patterns: list[re.Pattern],
 
 
 HONEST_LINE = "okay wait - I actually haven't done that yet, let me not get ahead of myself 😅"
+REFUSAL_DEFLECT = "mm not going there with you right now 🙄 ask me something else"
 
 CLAIM_PATTERNS = [_ACTION_CLAIMS]
 STATUS_PATTERNS = [_STATUS_WORDS]
+REFUSAL_PATTERNS = [_REFUSAL]
 
 
 def guard_stats(db) -> dict:

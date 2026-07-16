@@ -26,9 +26,14 @@ async def execute(args: dict, ctx: ToolContext) -> dict:
     elif re.search(r"\bbirthday\b", query, re.I):
         mood = "birthday"
 
-    song = covers.find(query or None, mood)
+    # For a random pick (no specific title asked), don't hand over the same
+    # track we just sent - "send another song" should actually be another one.
+    last_file = ctx.db.get_setting("last_song_file") if ctx.db and not query else None
+    song = covers.find(query or None, mood, exclude_file=last_file)
     if song:
         title = song.get("title", "")
+        if ctx.db and song.get("file"):
+            ctx.db.set_setting("last_song_file", song["file"])
         if _AUTO_TITLE.match(title):
             return {"ok": True, "song": song,
                     "result": "you have a song ready to send - it hasn't been given a "

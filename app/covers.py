@@ -72,7 +72,13 @@ class CoverPipeline:
                 continue
         return out
 
-    def find(self, query: str | None = None, mood: str | None = None) -> dict | None:
+    def find(self, query: str | None = None, mood: str | None = None,
+             exclude_file: str | None = None) -> dict | None:
+        """Find a song. `exclude_file` avoids repeating the last one sent when
+        picking at random (a specific-title query still returns its exact
+        match) - so "send another song" doesn't keep handing over the same
+        track. Falls back to the excluded song only if it's the sole option."""
+        import random
         lib = self.library()
         if not lib:
             return None
@@ -82,13 +88,16 @@ class CoverPipeline:
                 if q in _slug(s.get("title", "")) or _slug(s.get("title", "")) in q:
                     return s
             return None
+
+        def pick(pool: list[dict]) -> dict:
+            fresh = [s for s in pool if s.get("file") != exclude_file]
+            return random.choice(fresh or pool)
+
         if mood:
             hits = [s for s in lib if mood in (s.get("moods") or [])]
             if hits:
-                import random
-                return random.choice(hits)
-        import random
-        return random.choice(lib)
+                return pick(hits)
+        return pick(lib)
 
     def pending_inbox(self) -> list[Path]:
         done = {json.loads(p.read_text(encoding="utf-8")).get("source")
@@ -114,9 +123,17 @@ class CoverPipeline:
         logger.info("cover: processing %r", title)
 
         # 1) split
-        subprocess.run([sys.executable, "-m", "demucs", "--two-stems", "vocals",
-                        "-n", "htdemucs", "-o", str(WORK), str(song_path)],
-                       check=True, capture_output=True)
+        try:
+            subprocess.run([sys.executable, "-m", "demucs", "--two-stems", "vocals",
+                            "-n", "htdemucs", "-o", str(WORK), str(song_path)],
+                           check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            # capture_output swallows stderr into the exception object - the
+            # bare CalledProcessError repr (just "exit status 1") is useless
+            # for diagnosing WHY it failed, so surface it in the log instead.
+            logger.error("cover: demucs failed for %r:\n%s", title,
+                        e.stderr.decode(errors="replace") if e.stderr else "(no stderr)")
+            raise
         stem_dir = WORK / "htdemucs" / title
         vocals, sr = sf.read(stem_dir / "vocals.wav")
         instr, _ = sf.read(stem_dir / "no_vocals.wav")
@@ -141,8 +158,13 @@ class CoverPipeline:
         wav_tmp = WORK / f"{slug}.wav"
         sf.write(wav_tmp, mix.astype(np.float32), sr)
         mp3 = LIBRARY / f"{slug}.mp3"
-        subprocess.run(["ffmpeg", "-y", "-i", str(wav_tmp), "-b:a", "192k",
-                        str(mp3)], check=True, capture_output=True)
+        try:
+            subprocess.run(["ffmpeg", "-y", "-i", str(wav_tmp), "-b:a", "192k",
+                            str(mp3)], check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            logger.error("cover: ffmpeg encode failed for %r:\n%s", title,
+                        e.stderr.decode(errors="replace") if e.stderr else "(no stderr)")
+            raise
 
         meta = {"title": title, "file": mp3.name, "source": song_path.name,
                 "moods": [], "pitch_shift": self.pitch_shift,

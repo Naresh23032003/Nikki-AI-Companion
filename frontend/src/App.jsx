@@ -41,6 +41,7 @@ export default function App() {
             timestamp: m.timestamp,
             audio_url: m.audio_url || null,
             sticker_url: m.sticker_url || null,
+            image_url: m.image_url || null,
             status: 'read',
             source: m.source || 'webapp_chat',
           }))
@@ -129,6 +130,21 @@ export default function App() {
           onError: (err) => {
             reply = reply || `⚠️ ${err}`
             resolve()
+          },
+          // Song / drawn-image bubbles land mid-stream (after the text reply
+          // was already generated, e.g. a "sing"/"draw" tool result) - each
+          // gets its own bubble the moment the backend has it ready, instead
+          // of only showing up after a page reload.
+          onMedia: (payload) => {
+            appendMessage({
+              id: 'media' + Date.now() + Math.random().toString(36).slice(2),
+              role: 'assistant',
+              content: '',
+              timestamp: new Date().toISOString(),
+              audio_url: payload.kind === 'song' ? payload.url : null,
+              image_url: payload.kind === 'image' ? payload.url : null,
+              status: 'read',
+            })
           },
         })
       })

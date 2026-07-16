@@ -53,5 +53,14 @@ in `.wwebjs_auth/`, so subsequent runs log in automatically.
 | Var | Default | Meaning |
 |---|---|---|
 | `WA_TARGET` | - (required) | Your personal number, digits only with country code |
+| `WA_TARGETS` | - | Comma-separated allowlist for **multiple people**, e.g. `919876543210,919999999999`. Each number gets its own persona + isolated memory (see `profiles:` in `config.yaml`). `WA_TARGET` is included automatically. |
 | `BACKEND_URL` | `http://localhost:8000` | Companion backend |
 | `PORT` | `3001` | Bridge HTTP port (localhost only) |
+
+### Multiple people, one WhatsApp account
+
+Add every allowed number to `WA_TARGETS`, then map each one to a persona in
+`config.yaml` under `profiles:`. The sender's number picks which persona
+answers; replies only ever go back to the person who wrote. Each profile has
+its own SQLite file, its own vector collection, and its own
+relationship/affection/proactive state, so the two never share anything.

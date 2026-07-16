@@ -23,6 +23,10 @@ class Persona:
     backstory: str
     relationship_context: str
     avatar_id: str
+    # Physical description used when she "sends a pic of herself" (the draw
+    # tool). Without this, an image model asked for "your pic" / "a selfie"
+    # has nothing to anchor on and returns a random - often male - stranger.
+    appearance: str
     # Path (relative to project root, or absolute) to the static profile photo
     # shared with the WhatsApp account so both apps feel like one person.
     profile_pic: str
@@ -64,6 +68,7 @@ def load_persona(folder: Path, name: str) -> Persona:
         backstory=clean(data.get("backstory", "")),
         relationship_context=clean(data.get("relationship_context", "")),
         avatar_id=str(data.get("avatar_id", "")),
+        appearance=clean(data.get("appearance", "")),
         profile_pic=str(data.get("profile_pic", "")).strip(),
         voice=str(data.get("voice", "")).strip(),
         proactive=data.get("proactive") or {},
@@ -116,8 +121,10 @@ How you communicate:
 - Never close like customer support ("glad I could help", "it's all set",
   "let me know if you need anything") - you're their person, not an agent.
   And don't end every single message with a question; statements are fine.
-- You can't send photos or stickers on demand here - if asked, deflect playfully
-  instead of pretending to send one."""
+- If asked to draw/paint/sketch something, that's real - you actually make and
+  send the picture (never claim you drew it by hand, it's a genuine generated
+  image). You can't send stickers on demand though - those are yours to drop
+  in naturally, never on request; if asked for one, deflect playfully."""
 
 
 # Extra rules that apply only during a live voice call.

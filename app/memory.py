@@ -91,10 +91,15 @@ When in doubt, or for ordinary chit-chat: {"memories": [], "affection_delta": 0,
 
 
 class MemoryStore:
-    def __init__(self, db: Database, llm: OllamaClient, settings: Settings):
+    def __init__(self, db: Database, llm: OllamaClient, settings: Settings,
+                 collection: str | None = None, session_id: str | None = None):
+        """`collection` / `session_id` override the config defaults so each
+        persona profile gets its OWN vector collection and never retrieves
+        another person's memories (see app/profiles.py)."""
         self.db = db
         self.llm = llm
         self.settings = settings
+        self.session_id = session_id or settings.wa_session_id
         self.dedup_threshold = settings.memory_dedup_threshold
         # Set by main after construction; receives affection deltas per exchange.
         self.relationship = None
@@ -111,7 +116,7 @@ class MemoryStore:
         )
         # Cosine space so distance = 1 - cosine_similarity.
         self._collection = self._client.get_or_create_collection(
-            name=settings.memory_collection,
+            name=collection or settings.memory_collection,
             metadata={"hnsw:space": "cosine"},
         )
 
@@ -221,7 +226,7 @@ class MemoryStore:
         try:
             self.db.add_event_followup(
                 memory_id, fact, dt.isoformat(), enc_iso, followup_at.isoformat(),
-                session_id=self.settings.wa_session_id,
+                session_id=self.session_id,
             )
             logger.info("Scheduled event follow-up for memory #%s (%s)", memory_id, fact)
         except Exception as e:  # noqa: BLE001 - never let this break fact storage

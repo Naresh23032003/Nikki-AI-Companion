@@ -32,10 +32,32 @@ ollama:
 
 persona:
   # Which persona to load at startup. Must match a file name (without .yaml)
-  # in the personas/ folder.
+  # in the personas/ folder. With `profiles:` below, this is only the fallback
+  # for anything that doesn't resolve to a profile (e.g. the web app).
   active: "luna"
   # Folder holding persona definition files.
   folder: "personas"
+
+# Multi-persona: one entry per WhatsApp number allowed to talk to her. Each
+# profile is FULLY isolated - own persona, own SQLite file, own vector
+# collection, own relationship/affection/proactive state. Two people talking
+# to the same WhatsApp account get two different women who know nothing about
+# each other. See app/profiles.py.
+#
+# The `default: true` profile keeps the EXISTING companion.db + collection, so
+# the current history/memories carry over untouched. Others get their own
+# (companion_<id>.db + companion_memories_<id>).
+#
+# Numbers are digits only, with country code, no '+'. Delete this block
+# entirely to go back to plain single-persona mode.
+profiles:
+  - id: main
+    number: "919876543210"     # your number
+    persona: luna              # -> personas/luna.yaml (she's called Nikki)
+    default: true
+  - id: friend
+    number: "919876543211"     # <-- CHANGE ME: your friend's number
+    persona: aria              # Aria (see personas/aria.yaml)
 
 database:
   # SQLite file storing all sessions and messages.

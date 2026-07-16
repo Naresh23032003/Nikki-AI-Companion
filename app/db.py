@@ -71,6 +71,7 @@ class Database:
                     timestamp  TEXT NOT NULL,
                     audio_url  TEXT,
                     sticker_url TEXT,
+                    image_url  TEXT,
                     source     TEXT NOT NULL DEFAULT 'webapp_chat',
                     FOREIGN KEY (session_id) REFERENCES sessions(id)
                 );
@@ -225,6 +226,8 @@ class Database:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN audio_url TEXT")
             if "sticker_url" not in cols:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN sticker_url TEXT")
+            if "image_url" not in cols:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN image_url TEXT")
             if "source" not in cols:
                 self._conn.execute("ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'webapp_chat'")
             self._conn.execute("UPDATE messages SET source = 'webapp_chat' WHERE source IS NULL OR source = ''")
@@ -537,6 +540,7 @@ class Database:
         content: str,
         audio_url: str | None = None,
         sticker_url: str | None = None,
+        image_url: str | None = None,
         source: str | None = None,
     ) -> int:
         """Insert a message; returns its new id."""
@@ -544,9 +548,9 @@ class Database:
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO messages "
-                "(session_id, role, content, timestamp, audio_url, sticker_url, source) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (session_id, role, content, _utcnow(), audio_url, sticker_url, source),
+                "(session_id, role, content, timestamp, audio_url, sticker_url, image_url, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, role, content, _utcnow(), audio_url, sticker_url, image_url, source),
             )
             self._conn.commit()
             return int(cur.lastrowid)
@@ -582,7 +586,7 @@ class Database:
         """Full history for a session (used for inspection / debugging)."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, role, content, timestamp, audio_url, sticker_url, source "
+                "SELECT id, role, content, timestamp, audio_url, sticker_url, image_url, source "
                 "FROM messages WHERE session_id = ? ORDER BY id ASC",
                 (session_id,),
             ).fetchall()
@@ -594,6 +598,7 @@ class Database:
                 "timestamp": r["timestamp"],
                 "audio_url": r["audio_url"],
                 "sticker_url": r["sticker_url"],
+                "image_url": r["image_url"],
                 "source": r["source"],
             }
             for r in rows

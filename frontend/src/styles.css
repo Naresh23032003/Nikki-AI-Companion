@@ -157,6 +157,15 @@ button { font-family: inherit; cursor: pointer; }
 .bubble.me { background: var(--bubble-me); border-top-right-radius: 0; }
 
 .bubble-text { white-space: pre-wrap; }
+.bubble-image {
+  display: block;
+  max-width: 260px;
+  max-height: 260px;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  object-fit: cover;
+}
 /* Per-source marker: a 5px dot beside the timestamp (+ faint edge accent on
    the bubble). webapp_chat gets nothing - only "foreign" channels are marked. */
 .src-dot {
