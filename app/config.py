@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import yaml
 
@@ -57,6 +57,10 @@ class Settings:
     wa_bridge_url: str
     wa_voice_ratio: float
     wa_session_id: str
+    # Multi-persona profiles: one entry per WhatsApp number that may talk to
+    # her. Each profile is FULLY isolated - own persona, own SQLite file, own
+    # vector collection, own relationship/proactive state. See app/profiles.py.
+    profiles: List[Dict[str, Any]] = field(default_factory=list)
     # Two-brain / router / behavior (kept as dicts - consumed by their modules)
     brain: Dict[str, Any] = field(default_factory=dict)
     router: Dict[str, Any] = field(default_factory=dict)
@@ -120,6 +124,7 @@ def load_settings(config_path: Path = CONFIG_PATH) -> Settings:
         wa_bridge_url=whatsapp.get("bridge_url", "http://localhost:3001").rstrip("/"),
         wa_voice_ratio=float(whatsapp.get("voice_reply_ratio", 0.3)),
         wa_session_id=whatsapp.get("session_id", "main"),
+        profiles=data.get("profiles") or [],
         brain=data.get("brain", {}) or {},
         router=data.get("router", {}) or {},
         behavior=data.get("behavior", {}) or {},

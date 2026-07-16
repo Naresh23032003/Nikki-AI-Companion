@@ -20,6 +20,11 @@ av==18.0.0              # audio decoding (webm/opus) for STT
 # GPU STT also needs CUDA + cuDNN (via a CUDA-enabled PyTorch); CPU works without.
 
 # --- Her real cloned voice (optional, see docs/RVC_TRAINING.md) --------------
+# Singing covers (app/covers.py): vocal/instrumental stem split before RVC
+# conversion. Was referenced in docs but never actually listed here - install
+# it explicitly or every cover job fails identically regardless of the file.
+demucs==4.1.0
+#
 # Studio TTS (XTTS-v2) for rendered voice notes:
 #   pip install coqui-tts
 #   pip install torchcodec==0.14.0

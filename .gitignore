@@ -10,9 +10,13 @@ cloud_audit.jsonl
 config/latency.json
 
 # ---- Runtime data (regenerated on startup) ----
+# NB: the glob covers per-profile databases too (companion_<profile>.db, one
+# per person in config.yaml `profiles:`) - each holds real conversations and
+# must never be published.
 companion.db
-companion.db-shm
-companion.db-wal
+companion*.db
+companion*.db-shm
+companion*.db-wal
 chroma_db/
 
 # ---- Logs & backups ----
@@ -31,6 +35,8 @@ applio/
 media/tts/
 media/bench/
 media/avatars/*_upload*
+# Pictures the draw tool generated for a specific person (incl. "selfies").
+media/images/
 
 # ---- Node / frontend ----
 node_modules/

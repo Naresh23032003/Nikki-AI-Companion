@@ -51,7 +51,8 @@ _ASK_PREFIX = re.compile(
 _IMPERATIVE_VERBS = re.compile(
     r"^(remind|check|tell|show|set|add|log|order|book|get|find|look up|search|"
     r"send|text|ping|message|list|mark|calculate|explain|research|compare|"
-    r"summari[sz]e|translate|help me|sing|play|suggest|recommend)\b", re.I)
+    r"summari[sz]e|translate|help me|sing|play|suggest|recommend|"
+    r"draw|paint|sketch|doodle)\b", re.I)
 # A short throwaway interjection before the real ask ("Nice, what's the
 # weather like") shouldn't defeat the anchored checks below - these are safe
 # to strip unconditionally since what follows still has to pass the strict
@@ -121,6 +122,43 @@ _EXPERIENCE_Q = re.compile(r"^how (was|is|are|were)\b", re.I)
 # --- DEEP heuristics ----------------------------------------------------------
 _CODE_BLOCK = re.compile(r"```|(\bdef |\bclass |\bfunction\b|\bimport )")
 _MATH_EXPR = re.compile(r"\d+\s*[-+*/^%]\s*\d+|\b(sqrt|integral|derivative|equation)\b", re.I)
+# Song follow-ups that skip an imperative verb ("another song", "one more
+# song", "a different song", "next song", "play another"). Kept narrow -
+# must mention a song/track/tune, or be a short "another/one more one" reply.
+_SONG_FOLLOWUP = re.compile(
+    r"\b(another|one more|a different|other|next|more)\s+(song|track|tune)s?\b|"
+    r"\b(song|track|tune)\s+(again|please|pls)\b", re.I)
+
+# Explicit image requests, extracted deterministically so they don't depend on
+# the layer-2 tool-calling model (which times out / errors under GPU load and
+# then silently drops the request to CHAT - observed: "Send a picture of a
+# white cat" -> chat[tools:error]). Group 'subj' is what to draw.
+_DRAW_VERB = re.compile(
+    r"^(please\s+|pls\s+|can you\s+|could you\s+|would you\s+|hey\s+|"
+    r"can u\s+|will you\s+)*"
+    r"(draw|paint|sketch|doodle)\s+(me\s+)?(a\s+|an\s+|some\s+)?(?P<subj>.+)$", re.I)
+_TRAILING_POLITE = re.compile(r"\s+(please|pls|for me|thanks|thank you)\.?$", re.I)
+_DRAW_PIC_OF = re.compile(
+    r"\b(pic|picture|photo|photograph|image|selfie|drawing|painting|sketch)\s+of\s+"
+    r"(?P<subj>.+)$", re.I)
+# "send me a selfie", "send a pic" with no explicit subject -> a selfie of her.
+_DRAW_SELF = re.compile(
+    r"\b(send|show|take|make|share)\s+(me\s+)?(a\s+|your\s+|ur\s+)?"
+    r"(selfie|pic|picture|photo)\b", re.I)
+
+
+def draw_subject(message: str) -> str | None:
+    """If `message` is an explicit image request, return the subject to draw
+    ('you' for a selfie of herself), else None. Deterministic so a flaky
+    tool-calling round trip can't drop these to chat."""
+    t = message.strip()
+    m = _DRAW_VERB.match(t) or _DRAW_PIC_OF.search(t)
+    if m:
+        subj = _TRAILING_POLITE.sub("", m.group("subj")).strip(" ?!.,\"'")
+        return subj or "you"
+    if _DRAW_SELF.search(t):
+        return "you"
+    return None
 
 _TOOL_SYSTEM = ("You are a helpful assistant that can call tools when the user "
                "directly asks for an action. If the message is just conversation, "
@@ -167,6 +205,19 @@ class Router:
         # "i spent way too much lol" stays a mention (falls through to chat).
         if re.match(r"^i spent \d+(\.\d+)?\b", t, re.I):
             return None  # let layer 2 extract the amount/note via native tool-calling
+
+        # Explicit song follow-ups the imperative-verb gate misses: "another
+        # song", "one more song", "a different one" right after she sang, "next
+        # song". These are unambiguous song asks even without an imperative, and
+        # layer 2 kept mis-routing them to chat ("another song" -> smalltalk).
+        if _SONG_FOLLOWUP.search(t):
+            return Route("tool", tool="sing", reason="song-followup")
+
+        # Explicit image requests -> draw tool deterministically (see
+        # draw_subject); the layer-2 model drops these under GPU load.
+        subj = draw_subject(t)
+        if subj:
+            return Route("tool", tool="draw", args={"subject": subj}, reason="draw-request")
 
         # DEEP signals. Degrade mode raises the bar (casual stays local).
         degraded = bool(self.brain and self.brain.should_degrade())

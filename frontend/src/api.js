@@ -181,7 +181,7 @@ export function blobToBase64(blob) {
 // Stream a chat reply via Server-Sent Events over fetch.
 // Calls onToken(token) for each chunk, onDone() when finished, onError(msg).
 // Returns an AbortController so the caller can cancel.
-export function streamChat(message, sessionId, { onToken, onDone, onError }) {
+export function streamChat(message, sessionId, { onToken, onDone, onError, onMedia }) {
   const controller = new AbortController()
 
   ;(async () => {
@@ -208,7 +208,7 @@ export function streamChat(message, sessionId, { onToken, onDone, onError }) {
         while ((idx = buffer.indexOf('\n\n')) !== -1) {
           const frame = buffer.slice(0, idx)
           buffer = buffer.slice(idx + 2)
-          handleFrame(frame, { onToken, onDone, onError })
+          handleFrame(frame, { onToken, onDone, onError, onMedia })
         }
       }
     } catch (err) {
@@ -219,7 +219,7 @@ export function streamChat(message, sessionId, { onToken, onDone, onError }) {
   return controller
 }
 
-function handleFrame(frame, { onToken, onDone, onError }) {
+function handleFrame(frame, { onToken, onDone, onError, onMedia }) {
   let event = 'message'
   const dataLines = []
   for (const line of frame.split('\n')) {
@@ -235,5 +235,6 @@ function handleFrame(frame, { onToken, onDone, onError }) {
   }
   if (event === 'token') onToken?.(payload.token || '')
   else if (event === 'done') onDone?.(payload) // { message_id, text }
+  else if (event === 'media') onMedia?.(payload) // { kind: 'song'|'image', message_id, url }
   else if (event === 'error') onError?.(payload.error || 'stream error')
 }

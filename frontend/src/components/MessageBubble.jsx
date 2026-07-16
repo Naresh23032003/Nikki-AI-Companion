@@ -53,6 +53,8 @@ export default function MessageBubble({ message }) {
       >
         {message.audio_url ? (
           <VoiceNote src={message.audio_url} mine={mine} />
+        ) : message.image_url ? (
+          <img className="bubble-image" src={message.image_url} alt="" draggable="false" />
         ) : (
           <span className="bubble-text">{message.content}</span>
         )}

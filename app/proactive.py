@@ -228,6 +228,12 @@ class ProactiveEngine:
         return until.isoformat()
 
     def paused_until(self) -> str | None:
+        # Indefinite off-switch from the in-chat `/proactive off` command
+        # (app/commands.py). Every send path already funnels through here, so
+        # honouring it in one place covers check-ins, silence-reacts and
+        # milestones alike.
+        if self.db.get_setting("proactive_disabled"):
+            return "disabled"
         raw = self.db.get_setting("proactive_paused_until") or ""
         if not raw:
             return None

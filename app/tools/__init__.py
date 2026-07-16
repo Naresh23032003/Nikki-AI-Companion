@@ -36,6 +36,7 @@ class ToolContext:
     covers: Any = None       # CoverPipeline, set after construction (sing tool)
     relationship: Any = None  # RelationshipTracker (stage-gated tools)
     deliver: Any = None      # async fn(session_id, text) -> None (delivery routing)
+    persona: Any = None      # active Persona (draw tool: her appearance for selfies)
 
 
 @dataclass
@@ -66,9 +67,9 @@ class Tool:
 
 def _load_registry() -> Dict[str, Tool]:
     """Import each tool module and collect its TOOL export."""
-    from app.tools import events, reminder, sing, weather, zomato
+    from app.tools import draw, events, reminder, sing, weather, zomato
 
-    modules = [weather, reminder, events, sing, zomato]
+    modules = [weather, reminder, events, sing, draw, zomato]
     return {m.TOOL.name: m.TOOL for m in modules}
 
 

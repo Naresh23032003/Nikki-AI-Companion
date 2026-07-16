@@ -36,6 +36,7 @@ import mimetypes
 import random
 import re
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -62,12 +63,15 @@ from app.guards import (
     CAPABILITY_MANIFEST,
     CLAIM_PATTERNS,
     HONEST_LINE,
+    REFUSAL_DEFLECT,
+    REFUSAL_PATTERNS,
     STATUS_PATTERNS,
     guard_stats,
     scan_assistant_speak,
     scan_forbidden_claims,
     scan_honeypots,
     scan_reaction,
+    scan_refusal,
     strip_violating_sentences,
 )
 from app.covers import CoverPipeline
@@ -89,8 +93,10 @@ from app.emotion import (
     strip_tags,
 )
 from app.llm import OllamaClient
+from app.commands import handle as handle_command, is_command, mood_note
 from app.memory import VALID_CATEGORIES, MemoryStore
 from app.persona import build_system_prompt, list_persona_ids, load_persona
+from app.profiles import Profile, ProfileRegistry, load_profiles
 from app.relationship import STAGES, RelationshipTracker
 from app.stickers import STICKER_ROOT, ensure_dirs as ensure_sticker_dirs, pick_sticker
 from app.stt import STTEngine
@@ -180,14 +186,99 @@ class AppState:
     studio: StudioTTS | None = None
     covers: CoverPipeline | None = None
     gpu_queue: GPUJobQueue | None = None
+    profiles: ProfileRegistry | None = None
 
 
 state = AppState()
 
+# The profile (persona + its isolated db/memory/relationship) this request
+# belongs to. WhatsApp sets it per incoming message from the sender's number;
+# everything else (web app, calls) leaves it unset and gets the default
+# profile, which IS state.db/state.persona - i.e. unchanged behavior.
+_current_profile: ContextVar[Profile | None] = ContextVar("current_profile", default=None)
+
+
+def P() -> Profile:
+    """The profile serving this request. Never None once startup has run."""
+    p = _current_profile.get()
+    if p is not None:
+        return p
+    return state.profiles.default if state.profiles else None
+
 
 def _persona_voice() -> str | None:
     """The active persona's voice, or None to fall back to the default."""
-    return (state.persona.voice or None) if state.persona else None
+    p = P()
+    persona = p.persona if p else state.persona
+    return (persona.voice or None) if persona else None
+
+
+def _build_profiles(settings) -> ProfileRegistry:
+    """Wire each configured profile with its OWN isolated stack.
+
+    The default profile reuses the already-built singletons (state.db /
+    state.persona / state.memory / ...) so the existing database, vector
+    collection, web app and call paths behave exactly as before. Every other
+    profile gets a separate SQLite file and Chroma collection - two people
+    talking to the same WhatsApp account can never see each other's messages,
+    memories, affection or upset state.
+    """
+    registry = load_profiles(settings)
+    for p in registry:
+        if p.is_default:
+            p.db = state.db
+            p.persona = state.persona
+            p.memory = state.memory
+            p.relationship = state.relationship
+            p.daylife = state.daylife
+            p.tools = state.tools
+            p.tool_ctx = state.tool_ctx
+            continue
+        try:
+            p.db = Database(p.db_path)
+            p.persona = load_persona(settings.persona_folder, p.persona_id)
+            p.memory = MemoryStore(p.db, state.llm, settings,
+                                   collection=p.collection, session_id=p.session_id)
+            p.relationship = RelationshipTracker(p.db, p.memory)
+            p.memory.relationship = p.relationship
+            p.memory.blocked_names = {p.persona.name.lower()}
+            p.daylife = DayLife(p.db, state.llm, lambda p=p: p.persona, memory=p.memory)
+            p.memory.daylife = p.daylife
+            p.tool_ctx = ToolContext(db=p.db, llm=state.llm, settings=settings,
+                                     relationship=p.relationship,
+                                     deliver=_deliver_message, persona=p.persona)
+            p.tools = ToolRunner(p.tool_ctx)
+            p.tools.covers = state.covers  # song library is shared, not personal
+        except Exception as e:  # noqa: BLE001 - one bad profile must not stop boot
+            logger.exception("profiles: failed to build %r (%s) - it will be ignored", p.id, e)
+            p.db = None
+    registry.profiles = [p for p in registry if p.db is not None]
+    logger.info("profiles: %s", ", ".join(
+        f"{p.id}->{p.persona.name}(…{p.number[-4:] or '-'}, {p.db_path.name})"
+        for p in registry))
+    return registry
+
+
+def _reload_profile_persona(p: Profile, persona_id: str) -> None:
+    """Swap which persona answers a profile's number (the /persona command)."""
+    persona = load_persona(state.settings.persona_folder, persona_id)
+    p.persona = persona
+    p.persona_id = persona_id
+    p.memory.blocked_names = {persona.name.lower()}
+    if p.tool_ctx:
+        p.tool_ctx.persona = persona
+    if p.proactive:
+        # plan_day() reads get_persona() - the new persona's schedule/clinginess
+        # takes over from the next planning pass.
+        try:
+            p.proactive.plan_day()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("profiles: replan after persona switch failed: %s", e)
+    if p.is_default:
+        state.persona = persona
+        state.db.set_setting("active_persona", persona_id)
+    p.db.set_setting("profile_persona", persona_id)
+    logger.warning("profiles: %s persona -> %s", p.id, persona_id)
 
 
 @asynccontextmanager
@@ -229,7 +320,8 @@ async def lifespan(app: FastAPI):
     state.router = Router(state.llm, settings, brain=state.brain)
     state.router.db = state.db
     state.tool_ctx = ToolContext(db=state.db, llm=state.llm, settings=settings,
-                                 relationship=state.relationship, deliver=_deliver_message)
+                                 relationship=state.relationship, deliver=_deliver_message,
+                                 persona=state.persona)
     state.tools = ToolRunner(state.tool_ctx)
     state.daylife = DayLife(state.db, state.llm, lambda: state.persona,
                             memory=state.memory)
@@ -248,6 +340,11 @@ async def lifespan(app: FastAPI):
         (p := _training_progress()) and not p.get("done") and not p.get("failed"))
     state.covers = CoverPipeline(state.rvc, settings, state.gpu_queue)
     state.tools.covers = state.covers
+    # Multi-persona: one fully isolated world per WhatsApp number. Built here
+    # (after tools/covers exist) so every profile's tool runner can sing/draw.
+    # The default profile REUSES the objects above - same db file, same
+    # collection - so existing history and every non-WhatsApp path are unchanged.
+    state.profiles = _build_profiles(settings)
     logger.info("voice: call_voice=%s | rvc=%s | studio=%s(%s)",
                 vcfg.get("call_voice", "kokoro_raw"),
                 state.rvc.status_label(),
@@ -310,6 +407,25 @@ async def lifespan(app: FastAPI):
         state.proactive.scheduler.add_job(
             _nightly_backup, _CronTrigger(hour=4, minute=10),
             id="nightly_backup", replace_existing=True)
+        # The default profile IS state.proactive (all the shared background
+        # jobs above hang off its scheduler). Every other profile gets its own
+        # engine so she texts HER person on HER schedule, from her own state.
+        for p in state.profiles:
+            if p.is_default:
+                p.proactive = state.proactive
+                continue
+            try:
+                engine = ProactiveEngine(
+                    db=p.db, llm=state.llm, memory=p.memory,
+                    get_persona=lambda p=p: p.persona, settings=settings,
+                    relationship=p.relationship, tools=p.tools,
+                )
+                engine.covers = state.covers
+                engine.start()
+                p.proactive = engine
+                logger.info("proactive: started for profile %s (%s)", p.id, p.persona.name)
+            except Exception as e:  # noqa: BLE001 - one profile must not kill the rest
+                logger.warning("proactive: profile %s failed to start: %s", p.id, e)
     except Exception as e:  # noqa: BLE001
         logger.warning("Proactive scheduler failed to start: %s", e)
     logger.info(
@@ -330,6 +446,14 @@ async def lifespan(app: FastAPI):
     finally:
         if state.proactive:
             state.proactive.stop()
+        # Non-default profiles own their own engine + SQLite handle.
+        for p in (state.profiles or []):
+            if p.is_default:
+                continue
+            if p.proactive:
+                p.proactive.stop()
+            if p.db:
+                p.db.close()
         if state.rvc:
             state.rvc.close()
         if state.llm:
@@ -519,7 +643,7 @@ def _sanitized_recent(session_id: str) -> list[dict]:
     Prevents the model from imitating stray `{"emotion": ...}` tags that older
     replies may have left in history.
     """
-    recent = state.db.get_recent_messages(session_id, state.settings.max_messages)
+    recent = P().db.get_recent_messages(session_id, state.settings.max_messages)
     for m in recent:
         if m["role"] == "assistant":
             m["content"] = strip_tags(m["content"])
@@ -527,7 +651,8 @@ def _sanitized_recent(session_id: str) -> list[dict]:
 
 
 def _stage() -> str | None:
-    return state.relationship.stage if state.relationship else None
+    rel = P().relationship if P() else state.relationship
+    return rel.stage if rel else None
 
 
 # Stage-scaled bedtime realism (behavior.quiet_hours window). She ALWAYS
@@ -575,12 +700,13 @@ def _relationship_notes(*extra: str | None) -> str | None:
     here, so bedtime AND friction apply everywhere without per-channel
     wiring."""
     parts: list[str] = []
-    if state.relationship:
-        parts.append(state.relationship.addendum())
-        upset = state.relationship.upset_addendum()
+    rel = (P().relationship if P() else None) or state.relationship
+    if rel:
+        parts.append(rel.addendum())
+        upset = rel.upset_addendum()
         if upset:
             parts.append(upset)
-        ack = state.relationship.consume_ack_note()
+        ack = rel.consume_ack_note()
         if ack:
             parts.append(ack)
     bedtime = _bedtime_note()
@@ -641,10 +767,10 @@ def _awaiting_followup_note(session_id: str) -> str | None:
     resolve it now - the NEXT user message is treated as the answer (see
     app/db.py get_awaiting_followup's docstring for the intended design) -
     and tell her this reply is likely that answer so she doesn't re-ask."""
-    awaiting = state.db.get_awaiting_followup(session_id)
+    awaiting = P().db.get_awaiting_followup(session_id)
     if not awaiting:
         return None
-    state.db.resolve_event_followup(awaiting["id"])
+    P().db.resolve_event_followup(awaiting["id"])
     return (f"NOTE: You recently asked them about '{awaiting['event_fact']}' - this "
             f"message is likely their answer. React naturally to what they say now; "
             f"don't ask again.")
@@ -654,11 +780,12 @@ async def _maybe_repair_note(message: str) -> str | None:
     """If she's currently upset (see relationship.py's friction system) and
     this message reads as a sincere apology, clear it and return a one-shot
     warm-relief note for THIS reply."""
-    if not state.relationship:
+    rel = (P().relationship if P() else None) or state.relationship
+    if not rel:
         return None
     try:
-        if await state.relationship.maybe_repair(message):
-            return state.relationship.consume_repair_note()
+        if await rel.maybe_repair(message):
+            return rel.consume_repair_note()
     except Exception as e:  # noqa: BLE001 - never let this break a reply
         logger.warning("repair check failed: %s", e)
     return None
@@ -682,21 +809,21 @@ def _offer_note(message: str) -> str | None:
     if not topic:
         return None
     try:
-        declined = set(json.loads(state.db.get_setting("declined_offers") or "[]"))
+        declined = set(json.loads(P().db.get_setting("declined_offers") or "[]"))
     except json.JSONDecodeError:
         declined = set()
     if topic in declined:
         return None
-    n = int(state.db.get_setting("exchange_count") or 0)
-    last = int(state.db.get_setting("last_offer_at") or -999)
+    n = int(P().db.get_setting("exchange_count") or 0)
+    last = int(P().db.get_setting("last_offer_at") or -999)
     if n - last < gap or random.random() > eagerness:
         return None
-    state.db.set_setting("last_offer_at", str(n))
+    P().db.set_setting("last_offer_at", str(n))
     # _track_offer_decline() reads this back if the next message declines -
     # without it, a decline always recorded the literal string "last"
     # instead of the actual topic, so "permanently dropped once declined"
     # silently never worked.
-    state.db.set_setting("last_offer_topic", topic)
+    P().db.set_setting("last_offer_topic", topic)
     return (f"They just mentioned something about {topic}. Respond like a person "
             f"first (empathy/teasing/curiosity). You MAY casually offer to help "
             f"with it mid-conversation if it feels natural - one soft offer, "
@@ -717,18 +844,18 @@ def _pattern_note(message: str) -> str | None:
     gap = int(beh.get("offer_min_gap", 6)) * 4
     # Cheap gate check BEFORE the DB query - this runs on every message but
     # the roll usually says no, so querying memories first was pure waste.
-    n = int(state.db.get_setting("exchange_count") or 0)
-    last_n = int(state.db.get_setting("last_pattern_ref_at") or -999)
+    n = int(P().db.get_setting("exchange_count") or 0)
+    last_n = int(P().db.get_setting("last_pattern_ref_at") or -999)
     if n - last_n < gap or random.random() > eagerness * 0.4:
         return None
-    patterns = [m for m in state.db.list_memories_by_category("relationship")
+    patterns = [m for m in P().db.list_memories_by_category("relationship")
                if (m.get("fact") or "").startswith("Pattern:")]
     if not patterns:
         return None
-    last_id = int(state.db.get_setting("last_pattern_ref_id") or 0)
+    last_id = int(P().db.get_setting("last_pattern_ref_id") or 0)
     candidate = next((p for p in patterns if p["id"] != last_id), patterns[0])
-    state.db.set_setting("last_pattern_ref_at", str(n))
-    state.db.set_setting("last_pattern_ref_id", str(candidate["id"]))
+    P().db.set_setting("last_pattern_ref_at", str(n))
+    P().db.set_setting("last_pattern_ref_id", str(candidate["id"]))
     fact = candidate["fact"][len("Pattern:"):].strip()
     return (f"NOTE: from quietly paying attention over time you've noticed this about "
             f"them: {fact}. You MAY bring it up naturally if the moment fits - as one "
@@ -749,18 +876,18 @@ def _streak_note(message: str) -> str | None:
     beh = state.settings.behavior or {}
     eagerness = float(beh.get("eagerness", 0.2))
     gap = int(beh.get("offer_min_gap", 6))
-    n = int(state.db.get_setting("exchange_count") or 0)
-    last_n = int(state.db.get_setting("last_streak_ref_at") or -999)
+    n = int(P().db.get_setting("exchange_count") or 0)
+    last_n = int(P().db.get_setting("last_streak_ref_at") or -999)
     if n - last_n < gap or random.random() > eagerness:
         return None
-    streaks = [m for m in state.db.list_memories_by_category("relationship")
+    streaks = [m for m in P().db.list_memories_by_category("relationship")
               if (m.get("fact") or "").startswith("Streak:")]
     if not streaks:
         return None
     candidate = streaks[0]
-    state.db.set_setting("last_streak_ref_at", str(n))
-    state.db.delete_memory(candidate["id"])
-    state.memory.remove(candidate["id"])
+    P().db.set_setting("last_streak_ref_at", str(n))
+    P().db.delete_memory(candidate["id"])
+    P().memory.remove(candidate["id"])
     fact = candidate["fact"][len("Streak:"):].strip()
     return (f"NOTE: you've quietly noticed this about how they've been the last few "
             f"days: {fact}. Bring it up naturally as one gentle, caring check-in if "
@@ -799,13 +926,13 @@ def _nonsense_note(message: str) -> str | None:
     """Track consecutive gibberish/identical messages and hand the model a
     human way out. Returns a prompt note while a streak is active."""
     norm = re.sub(r"\s+", " ", message.strip().lower())
-    last = state.db.get_setting("last_user_msg") or ""
-    state.db.set_setting("last_user_msg", norm)
+    last = P().db.get_setting("last_user_msg") or ""
+    P().db.set_setting("last_user_msg", norm)
     gib = _is_gibberish(message)
     repeat = bool(norm) and norm == last
-    streak = int(state.db.get_setting("nonsense_streak") or 0)
+    streak = int(P().db.get_setting("nonsense_streak") or 0)
     streak = streak + 1 if (gib or repeat) else 0
-    state.db.set_setting("nonsense_streak", str(streak))
+    P().db.set_setting("nonsense_streak", str(streak))
     if streak == 0:
         return None
     what = "keyboard-mash gibberish" if gib else "the exact same message again"
@@ -825,17 +952,17 @@ def _nonsense_note(message: str) -> str | None:
 
 def _track_offer_decline(message: str) -> None:
     """If she offered last turn and this reply is a decline, drop that topic."""
-    if int(state.db.get_setting("last_offer_at") or -1) != \
-       int(state.db.get_setting("exchange_count") or 0) - 1:
+    if int(P().db.get_setting("last_offer_at") or -1) != \
+       int(P().db.get_setting("exchange_count") or 0) - 1:
         return
     if re.match(r"^\s*(no+|nah|nope|don'?t|it'?s ok(ay)?|i'?m (fine|good))\b",
                 message.strip(), re.I):
         try:
-            declined = set(json.loads(state.db.get_setting("declined_offers") or "[]"))
+            declined = set(json.loads(P().db.get_setting("declined_offers") or "[]"))
         except json.JSONDecodeError:
             declined = set()
-        declined.add(state.db.get_setting("last_offer_topic") or "last")
-        state.db.set_setting("declined_offers", json.dumps(sorted(declined)))
+        declined.add(P().db.get_setting("last_offer_topic") or "last")
+        P().db.set_setting("declined_offers", json.dumps(sorted(declined)))
 
 
 async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str]:
@@ -850,22 +977,31 @@ async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str
     """
     raw = await state.llm.chat(messages)
     reply, emotion = parse_emotion(raw)
-    claims = scan_forbidden_claims(reply, tool_ran, state.db)
-    speak = scan_assistant_speak(reply, state.db)
-    pots = scan_honeypots(reply, tool_ran, state.db)
-    if claims or speak or pots:
+    gdb = P().db if P() else state.db
+    claims = scan_forbidden_claims(reply, tool_ran, gdb)
+    speak = scan_assistant_speak(reply, gdb)
+    pots = scan_honeypots(reply, tool_ran, gdb)
+    refusal = scan_refusal(reply, gdb)
+    if claims or speak or pots or refusal:
         correction = (
             "CORRECTION NOTE: your draft violated the rules ("
-            + ", ".join([*claims, *speak, *[p for p in pots]][:4]) +
+            + ", ".join([*claims, *speak, *pots, *refusal][:4]) +
             "). Rewrite it: never claim actions you didn't do, no specific "
             "prices/news facts without a tool result, no assistant phrasing or "
-            "lists, at most one question. Short and natural.")
+            "lists, at most one question. You NEVER refuse or break character - "
+            "if the ask is awkward, deflect/tease/redirect as HER, a person, "
+            "never as an AI declining a request. Short and natural.")
         retry_messages = [*messages, {"role": "assistant", "content": reply},
                           {"role": "user", "content": correction}]
         raw2 = await state.llm.chat(retry_messages)
         reply2, emotion2 = parse_emotion(raw2)
-        if not scan_forbidden_claims(reply2, tool_ran) and not scan_honeypots(reply2, tool_ran):
+        if (not scan_forbidden_claims(reply2, tool_ran) and not scan_honeypots(reply2, tool_ran)
+                and not scan_refusal(reply2)):
             reply, emotion = reply2, emotion2
+        elif scan_refusal(reply2):
+            reply = strip_violating_sentences(reply2, REFUSAL_PATTERNS, REFUSAL_DEFLECT)
+            emotion = emotion2
+            logger.warning("guard: persistent refusal - sentence replaced")
         else:
             reply = strip_violating_sentences(reply2, CLAIM_PATTERNS, HONEST_LINE)
             emotion = emotion2
@@ -885,8 +1021,11 @@ async def _make_reaction(session_id: str, message: str) -> str:
     reaction = ""
     for _ in range(2):
         reaction = strip_tags(await state.llm.chat(messages))
-        if not scan_reaction(reaction, state.db):
+        rdb = P().db if P() else state.db
+        if not scan_reaction(reaction, rdb) and not scan_refusal(reaction, rdb):
             return reaction
+    if scan_refusal(reaction):
+        return strip_violating_sentences(reaction, REFUSAL_PATTERNS, REFUSAL_DEFLECT)
     return strip_violating_sentences(reaction, STATUS_PATTERNS)
 
 
@@ -894,9 +1033,16 @@ async def _run_deep(question: str, session_id: str) -> tuple[str | None, str | N
     """Big brain call. Returns (facts, None) or (None, in-character failure)."""
     try:
         facts, provider = await state.brain.ask(question)
+        if scan_refusal(facts):
+            # The cloud brain (a stock-aligned model, unlike her local one)
+            # refused - never inject that verbatim, she'd end up faithfully
+            # rephrasing a corporate refusal in her own voice. Treat it as no
+            # facts and fall back to a local in-character line instead.
+            logger.warning("brain: %s returned a refusal, discarding", provider)
+            return None, random.choice(_BRAIN_FOG)
         return facts[:1500], None  # cap injected size
     except BrainUnavailable as e:
-        state.db.add_deferred("deep", question, session_id,
+        P().db.add_deferred("deep", question, session_id,
                               not_before=_retry_time(e.retry_after))
         if e.retry_after:
             mins = max(1, round(e.retry_after / 60))
@@ -934,7 +1080,7 @@ async def _maybe_busy_brushoff(session_id: str, message: str, urgent: bool) -> s
     kind='busy_return', delivered by _deliver_busy_return). Returns the
     brush-off text to send now, or None if this message gets a normal reply.
     """
-    if urgent or not state.daylife.busy_now():
+    if urgent or not P().daylife.busy_now():
         return None
     stage = _stage() or "stranger"
     if stage in ("stranger", "acquaintance"):
@@ -942,17 +1088,17 @@ async def _maybe_busy_brushoff(session_id: str, message: str, urgent: bool) -> s
     beh = state.settings.behavior or {}
     if not beh.get("schedule_realism", True):
         return None
-    n = int(state.db.get_setting("exchange_count") or 0)
-    last = int(state.db.get_setting("last_busy_brushoff_at") or -999)
+    n = int(P().db.get_setting("exchange_count") or 0)
+    last = int(P().db.get_setting("last_busy_brushoff_at") or -999)
     if n - last < 2 or random.random() > _BUSY_BRUSHOFF_PROB:
         return None
 
-    day = await state.daylife.today()
-    slot = state.daylife.current_slot()
+    day = await P().daylife.today()
+    slot = P().daylife.current_slot()
     doing = (day.get("slots") or {}).get(slot, "in the middle of something")
     try:
         system_prompt = build_system_prompt(
-            state.persona, None, current_time=_now_context(), stage=_stage())
+            P().persona, None, current_time=_now_context(), stage=_stage())
         raw = await state.llm.chat(messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": (
@@ -969,10 +1115,10 @@ async def _maybe_busy_brushoff(session_id: str, message: str, urgent: bool) -> s
     if not text:
         return None
 
-    state.db.set_setting("last_busy_brushoff_at", str(n))
+    P().db.set_setting("last_busy_brushoff_at", str(n))
     delay_min = random.uniform(30, 120)
     not_before = (datetime.now(timezone.utc) + timedelta(minutes=delay_min)).isoformat()
-    state.db.add_deferred("busy_return", message, session_id, not_before=not_before)
+    P().db.add_deferred("busy_return", message, session_id, not_before=not_before)
     logger.info("busy brush-off fired (%s) - real answer queued in %.0fmin", slot, delay_min)
     return text
 
@@ -1089,6 +1235,8 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
             holder["tool_ran"] = res.get("ok", False)
             if res.get("song"):
                 holder["song"] = res["song"]  # attach after the text reply
+            if res.get("image"):
+                holder["image"] = res["image"]  # attach after the text reply
             if res.get("queue_query"):
                 _queue_cover_request(res["queue_query"], req.session_id)
             tool_note = _TOOL_NOTE.format(result=res["result"]) if res.get("ok") else (
@@ -1173,9 +1321,18 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
                                            "text": bubble, "final": False}), event="done")
                     await asyncio.sleep(random.uniform(0.5, 1.3))
             if holder.get("song"):
-                # The song lands as its own audio bubble after her text.
-                db.add_message(req.session_id, "assistant", "",
-                               audio_url=holder["song"]["url"], source="webapp_chat")
+                # The song lands as its own audio bubble after her text - a
+                # dedicated SSE event, not just a DB row, so it actually shows
+                # up in THIS stream instead of only on the next page reload.
+                mid = db.add_message(req.session_id, "assistant", "",
+                                     audio_url=holder["song"]["url"], source="webapp_chat")
+                yield _sse(json.dumps({"kind": "song", "message_id": mid,
+                                       "url": holder["song"]["url"]}), event="media")
+            if holder.get("image"):
+                mid = db.add_message(req.session_id, "assistant", "",
+                                     image_url=holder["image"]["url"], source="webapp_chat")
+                yield _sse(json.dumps({"kind": "image", "message_id": mid,
+                                       "url": holder["image"]["url"]}), event="media")
         except Exception as e:  # noqa: BLE001
             logger.exception("chat pipeline failed")
             yield _sse(json.dumps({"error": f"chat failed: {e}"}), event="error")
@@ -1229,6 +1386,38 @@ def _queue_cover_request(query: str, session_id: str) -> None:
     _spawn(job_then_deliver())
 
 
+async def _wa_send_song(meta: dict, delay: float = 2.0,
+                        to_number: str | None = None) -> None:
+    """Deliver an instant library-hit song to WhatsApp. Her text reply (with
+    the tool note telling her to 'send it now') goes out first via the
+    normal return payload - this small delay just keeps the audio from
+    racing ahead of that text. `to_number` targets the profile that asked, so
+    one person's song never lands in the other's chat."""
+    await asyncio.sleep(delay)
+    try:
+        payload = {"wav_path": str(ROOT / "songs" / "library" / meta["file"])}
+        if to_number:
+            payload["to"] = to_number
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            await c.post(f"{state.settings.wa_bridge_url}/send-voice", json=payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def _wa_send_image(meta: dict, delay: float = 2.0,
+                         to_number: str | None = None) -> None:
+    """Deliver a drawn image to WhatsApp as a real photo attachment."""
+    await asyncio.sleep(delay)
+    try:
+        payload = {"path": meta["path"]}
+        if to_number:
+            payload["to"] = to_number
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            await c.post(f"{state.settings.wa_bridge_url}/send-image", json=payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def _scan_cover_inbox() -> None:
     """Auto-render anything dropped into songs/inbox/."""
     if not (state.covers and state.rvc and state.rvc.available):
@@ -1267,29 +1456,44 @@ async def _deliver_message(session_id: str, text: str) -> str:
     """Store + push a self-initiated message. Routes by availability:
     connected companion device first, else WhatsApp - and ALWAYS mirrors into
     the web app history (the DB write below), regardless of which channel
-    delivered it live. Returns the source tag actually used."""
-    state.db.ensure_session(session_id)
+    delivered it live. Returns the source tag actually used.
+
+    The session decides WHICH profile (and therefore which person's number +
+    which database) this belongs to, so a proactive message from one persona
+    can never land in the other person's chat.
+    """
+    profile = (state.profiles.by_session(session_id) if state.profiles
+               else None) or (state.profiles.default if state.profiles else None)
+    db = profile.db if profile else state.db
+    db.ensure_session(session_id)
 
     source = "whatsapp"
     delivered = False
-    for candidate in list(_DEVICE_SOCKETS):
-        if await _push_to_device(candidate, text):
-            source = _DEVICE_KINDS.get(candidate, "tablet")
-            delivered = True
-            break
+    # Companion devices are only paired with the default profile's person -
+    # never push another profile's message onto them.
+    if not profile or profile.is_default:
+        for candidate in list(_DEVICE_SOCKETS):
+            if await _push_to_device(candidate, text):
+                source = _DEVICE_KINDS.get(candidate, "tablet")
+                delivered = True
+                break
 
     if not delivered:
         try:
+            payload = {"text": text}
+            if profile and profile.number:
+                payload["to"] = profile.number
             async with httpx.AsyncClient(timeout=10.0) as c:
                 r = await c.post(f"{state.settings.wa_bridge_url}/send-text",
-                                 json={"text": text})
+                                 json=payload)
                 r.raise_for_status()
                 delivered = True
         except Exception as e:  # noqa: BLE001 - web history still has it either way
             logger.info("delivery: WhatsApp bridge unreachable (%s) - web-only", e)
 
-    state.db.add_message(session_id, "assistant", text, source=source)
-    logger.info("delivery: routed via %s (delivered=%s)", source, delivered)
+    db.add_message(session_id, "assistant", text, source=source)
+    logger.info("delivery: routed via %s (delivered=%s, profile=%s)",
+                source, delivered, profile.id if profile else "-")
     return source
 
 
@@ -1564,6 +1768,8 @@ async def set_active_persona(body: ActivePersona):
         raise HTTPException(status_code=404, detail="Persona not found")
     state.persona = load_persona(state.settings.persona_folder, body.id)
     state.db.set_setting("active_persona", body.id)
+    if state.tool_ctx:
+        state.tool_ctx.persona = state.persona  # keep the draw tool's selfie appearance current
     if state.memory:
         state.memory.blocked_names = {state.persona.name.lower()}
     logger.info("Switched active persona to '%s'", body.id)
@@ -2375,7 +2581,9 @@ class WhatsAppIncoming(BaseModel):
     # messages (oldest first). `text` stays as the joined fallback so an
     # older bridge without batching keeps working unchanged.
     texts: list[str] | None = None
-    from_number: str | None = None  # informational/logging only
+    # Which number sent this - selects the persona/profile that answers (see
+    # app/profiles.py). Unknown/missing falls back to the default profile.
+    from_number: str | None = None
 
 
 class WhatsAppMedia(BaseModel):
@@ -2383,6 +2591,7 @@ class WhatsAppMedia(BaseModel):
     data_b64: str = Field(..., min_length=1)
     mimetype: str | None = None
     caption: str | None = None  # accompanying text sent with an image, if any
+    from_number: str | None = None  # selects the profile, same as /incoming
 
 
 _CANT_SEE_PHOTOS = [
@@ -2418,12 +2627,14 @@ async def whatsapp_incoming_media(body: WhatsAppMedia):
     """A WhatsApp photo or voice note - turned into a normal (synthetic) text
     message and handed to the SAME pipeline as /whatsapp/incoming, so
     routing/guards/stickers/voice-roll/multi-bubble all apply for free."""
+    profile = state.profiles.by_number(body.from_number or "") or state.profiles.default
+    _current_profile.set(profile)
     if body.kind == "voice":
         if not state.stt.available:
             text = random.choice(_CANT_SEE_PHOTOS)  # same honest-deflection spirit
-            state.db.ensure_session(state.settings.wa_session_id)
-            state.db.add_message(state.settings.wa_session_id, "assistant", text,
-                                 source="whatsapp")
+            profile.db.ensure_session(profile.session_id)
+            profile.db.add_message(profile.session_id, "assistant", text,
+                                   source="whatsapp")
             return {"mode": "text", "text": text, "texts": [text], "wav_path": None,
                     "audio_url": None, "sticker_path": None, "sticker_url": None,
                     "emotion": "neutral"}
@@ -2434,15 +2645,16 @@ async def whatsapp_incoming_media(body: WhatsAppMedia):
         description = await _caption_image(body.data_b64)
         if description is None:
             text = random.choice(_CANT_SEE_PHOTOS)
-            state.db.ensure_session(state.settings.wa_session_id)
-            state.db.add_message(state.settings.wa_session_id, "assistant", text,
-                                 source="whatsapp")
+            profile.db.ensure_session(profile.session_id)
+            profile.db.add_message(profile.session_id, "assistant", text,
+                                   source="whatsapp")
             return {"mode": "text", "text": text, "texts": [text], "wav_path": None,
                     "audio_url": None, "sticker_path": None, "sticker_url": None,
                     "emotion": "neutral"}
         caption_suffix = f" {body.caption}" if body.caption else ""
         synthetic = f"[sent a photo - looks like: {description}]{caption_suffix}"
-    return await whatsapp_incoming(WhatsAppIncoming(text=synthetic))
+    return await whatsapp_incoming(
+        WhatsAppIncoming(text=synthetic, from_number=body.from_number))
 
 
 _CALL_EXCUSES = [
@@ -2456,9 +2668,17 @@ _CALL_EXCUSES = [
 @app.post("/whatsapp/incoming")
 async def whatsapp_incoming(body: WhatsAppIncoming):
     """Normal chat pipeline for a WhatsApp message; returns the reply for the
-    bridge to deliver. ~voice_reply_ratio of replies come back as voice notes."""
-    session_id = state.settings.wa_session_id
-    db = state.db
+    bridge to deliver. ~voice_reply_ratio of replies come back as voice notes.
+
+    The sender's number selects the PROFILE (persona + its own db/memory/
+    relationship) - see app/profiles.py. Everything below then runs against
+    that profile only, so two people on the same WhatsApp account get two
+    independent women who share nothing.
+    """
+    profile = state.profiles.by_number(body.from_number or "") or state.profiles.default
+    _current_profile.set(profile)
+    session_id = profile.session_id
+    db = profile.db
 
     # Burst batching: the bridge debounces rapid-fire texts and hands them
     # over as one batch, so she answers the whole thought with ONE reply
@@ -2468,6 +2688,22 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
     # the combined text.
     incoming = [t.strip() for t in (body.texts or [body.text]) if t and t.strip()]
     combined = "\n".join(incoming) or body.text
+
+    # Keyword commands (/closeness, /mood, /persona, ...) are mechanical: they
+    # run against THIS profile only, never reach the model, and are not stored
+    # as conversation or memory.
+    if is_command(combined):
+        result = handle_command(combined, profile,
+                                list_persona_ids(state.settings.persona_folder))
+        if result.switch_persona:
+            try:
+                _reload_profile_persona(profile, result.switch_persona)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("persona switch failed")
+                result.reply = f"couldn't switch persona: {e}"
+        return {"mode": "text", "text": result.reply, "texts": [result.reply],
+                "wav_path": None, "audio_url": None, "sticker_path": None,
+                "sticker_url": None, "emotion": "neutral"}
 
     db.ensure_session(session_id)
     for t in incoming or [body.text]:
@@ -2489,20 +2725,28 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
     if brushoff:
         db.add_message(session_id, "assistant", brushoff, source="whatsapp")
         if not nonsense_note:
-            _spawn(state.memory.extract_and_store(combined, brushoff, source="whatsapp"))
+            _spawn(profile.memory.extract_and_store(combined, brushoff, source="whatsapp"))
         return {"mode": "text", "text": brushoff, "texts": [brushoff], "wav_path": None,
                 "audio_url": None, "sticker_path": None, "sticker_url": None,
                 "emotion": "neutral"}
 
     # Same router + guards as web chat (mention-vs-request enforced everywhere).
     mem_task = None if nonsense_note else \
-        asyncio.create_task(state.memory.retrieve_memories(combined))
+        asyncio.create_task(profile.memory.retrieve_memories(combined))
     route = await state.router.route(combined)
     tool_note = None
     tool_ran = False
     if route.kind == "tool":
-        res = await state.tools.call(route.tool, route.args)
+        res = await profile.tools.call(route.tool, route.args)
         tool_ran = res.get("ok", False)
+        if res.get("song"):
+            # Library hit is instant, but the reply text still has to go out
+            # first - this used to be silently dropped here (only the
+            # queue_query/miss path below was ever wired up for WhatsApp), so
+            # she'd say "sending it now" and then nothing arrived.
+            _spawn(_wa_send_song(res["song"], to_number=profile.number))
+        if res.get("image"):
+            _spawn(_wa_send_image(res["image"], to_number=profile.number))
         if res.get("queue_query"):
             _queue_cover_request(res["queue_query"], session_id)
         tool_note = _TOOL_NOTE.format(result=res["result"]) if tool_ran else (
@@ -2515,7 +2759,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
             tool_note = _DEEP_NOTE.format(facts=facts)
         elif failure:
             db.add_message(session_id, "assistant", failure, source="whatsapp")
-            _spawn(state.memory.extract_and_store(combined, failure, source="whatsapp"))
+            _spawn(profile.memory.extract_and_store(combined, failure, source="whatsapp"))
             return {"mode": "text", "text": failure, "texts": [failure], "wav_path": None,
                     "audio_url": None, "sticker_path": None, "sticker_url": None,
                     "emotion": "neutral"}
@@ -2526,13 +2770,13 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
         memories = []
     day_note = None
     try:
-        day_note = await state.daylife.prompt_note()
+        day_note = await profile.daylife.prompt_note()
     except Exception:  # noqa: BLE001
         pass
     # Ask for the trailing emotion tag - it drives sticker choice, then gets
     # stripped before anything is stored or sent.
     system_prompt = build_system_prompt(
-        state.persona,
+        profile.persona,
         memories,
         current_time=_now_context(),
         extra_notes=_relationship_notes(CAPABILITY_MANIFEST, day_note,
@@ -2540,7 +2784,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
                                         _offer_note(combined), _pattern_note(combined),
                                         _streak_note(combined),
                                         tool_note, followup_note, repair_note,
-                                        nonsense_note),
+                                        nonsense_note, mood_note(db)),
         stage=_stage(),
     )
     messages = [
@@ -2575,7 +2819,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
     sticker_path = None
     sticker_url = None
     sticker_only = False
-    prob = state.relationship.sticker_probability() if state.relationship else 0.0
+    prob = profile.relationship.sticker_probability() if profile.relationship else 0.0
     last_had = db.get_setting("last_reply_had_sticker") == "1"
     if prob > 0 and not last_had and random.random() < prob:
         picked = pick_sticker(emotion)
@@ -2596,7 +2840,7 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
     if sticker_url:
         db.add_message(session_id, "assistant", "", sticker_url=sticker_url, source="whatsapp")
     if not nonsense_note:  # junk exchanges must never become "facts"
-        _spawn(state.memory.extract_and_store(combined, reply, source="whatsapp"))
+        _spawn(profile.memory.extract_and_store(combined, reply, source="whatsapp"))
 
     # --- voice-note roll (text replies only; only the LAST bubble gets a
     # voice note - TTS-ing every short bubble in a multi-part text would be
@@ -2678,19 +2922,26 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
     }
 
 
+class WhatsAppCallRejected(BaseModel):
+    from_number: str | None = None  # selects the profile, same as /incoming
+
+
 @app.post("/whatsapp/call-rejected")
-async def whatsapp_call_rejected():
+async def whatsapp_call_rejected(body: WhatsAppCallRejected | None = None):
     """A real WhatsApp call came in; the bridge auto-rejected it. Log it, store
     a memory, and hand back an in-character 'can't pick up' text."""
-    session_id = state.settings.wa_session_id
+    profile = (state.profiles.by_number((body.from_number if body else "") or "")
+               or state.profiles.default)
+    _current_profile.set(profile)
+    session_id = profile.session_id
     now_label = datetime.now().strftime("%I:%M %p").lstrip("0")
 
-    state.db.ensure_session(session_id)
-    state.db.add_message(
+    profile.db.ensure_session(session_id)
+    profile.db.add_message(
         session_id, "event", f"Missed WhatsApp call · {now_label}", source="whatsapp"
     )
     _spawn(
-        state.memory.add_fact(
+        profile.memory.add_fact(
             f"User tried to call her on WhatsApp at {now_label} on "
             f"{datetime.now():%B %d} and she couldn't pick up.",
             "event",
@@ -2703,7 +2954,7 @@ async def whatsapp_call_rejected():
     text = random.choice(_CALL_EXCUSES)
     try:
         system_prompt = build_system_prompt(
-            state.persona, None, current_time=_now_context(), stage=_stage()
+            profile.persona, None, current_time=_now_context(), stage=_stage()
         )
         raw = await state.llm.chat(
             messages=[
@@ -2726,7 +2977,7 @@ async def whatsapp_call_rejected():
     except Exception as e:  # noqa: BLE001
         logger.warning("Call-reject reply generation failed, using canned: %s", e)
 
-    state.db.add_message(session_id, "assistant", text, source="whatsapp")
+    profile.db.add_message(session_id, "assistant", text, source="whatsapp")
     return {"text": text}
 
 
