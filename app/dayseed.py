@@ -146,7 +146,17 @@ class DayLife:
             f"you're {doing}. On your mind: {s.get('on_mind', 'nothing much')}.",
         ]
         if s.get("random_event"):
-            lines.append(f"Earlier today: {s['random_event']}")
+            # This can name-drop one of HER OWN friends (see _SEED_PROMPT) -
+            # observed live: a small model with no name for the person it's
+            # texting grabbed that name and used it to address them instead
+            # ("dev, chill out, i'm here" - to a total stranger). Anyone
+            # mentioned here is a character from HER life, never the person
+            # in this conversation, whose name (if any) only comes from what
+            # THEY told her in the chat itself.
+            lines.append(
+                f"Earlier today (someone from YOUR OWN life, not the person "
+                f"you're texting - never address them by this name): "
+                f"{s['random_event']}")
         if s.get("thread_update"):
             lines.append(f"Life update: {s['thread_update']}")
         lines.append(

@@ -124,6 +124,36 @@ def scan_forbidden_claims(reply: str, tool_ran: bool, db=None) -> list[str]:
     return hits
 
 
+def scan_identity_confusion(reply: str, other_names: list[str], db=None) -> list[str]:
+    """Caught live and it compounds badly: her own backstory friend's name
+    (injected via the day-state 'earlier today' note, see app/dayseed.py)
+    got used to address the ACTUAL person she's texting - "dev, chill out,
+    i'm here" to a total stranger, later escalating to flatly telling them
+    "dev is you!". Once a wrong name like this lands in stored history, the
+    model treats its own past mistake as fact and reinforces it further turn
+    after turn, so this needs a hard block, not just a prompt nudge.
+
+    `other_names` are the persona's own backstory characters (life.friends) -
+    people who exist in HER life, never valid names for whoever she's
+    actually talking to unless THEY said it themselves in this chat."""
+    hits: list[str] = []
+    for name in other_names:
+        name = (name or "").strip()
+        if not name or len(name) < 2:
+            continue
+        n = re.escape(name)
+        pat = re.compile(
+            rf"\b{n}\s+is\s+you\b|\byou('re| are)\s+{n}\b|"
+            rf"^\s*{n}\s*[,:]\s+\S|\bhey\s+{n}\b", re.I | re.M)
+        if pat.search(reply):
+            hits.append(name)
+    if hits:
+        _bump(db, "identity_confusion")
+        logger.warning("guard: identity confusion (used %s to address the user) in %r",
+                       hits, reply[:80])
+    return hits
+
+
 def scan_refusal(reply: str, db=None) -> list[str]:
     """Model snapped into assistant-mode and refused - never tool-gated,
     this can happen on any turn regardless of whether a tool ran."""
