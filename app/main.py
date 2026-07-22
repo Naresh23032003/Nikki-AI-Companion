@@ -2001,14 +2001,25 @@ async def journal_run_weekly_now():
 # ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
+def _db_for_session(session_id: str):
+    """Resolve which database a session_id actually lives in - each profile
+    has its OWN db file (see app/profiles.py), so these must not silently
+    fall through to the default profile's db when the session belongs to
+    someone else's profile."""
+    profile = state.profiles.by_session(session_id) if state.profiles else None
+    return profile.db if profile else state.db
+
+
 @app.get("/history/{session_id}")
 async def get_history(session_id: str):
-    return {"session_id": session_id, "messages": state.db.get_all_messages(session_id)}
+    db = _db_for_session(session_id)
+    return {"session_id": session_id, "messages": db.get_all_messages(session_id)}
 
 
 @app.delete("/history/{session_id}")
 async def clear_history(session_id: str):
-    removed = state.db.clear_session(session_id)
+    db = _db_for_session(session_id)
+    removed = db.clear_session(session_id)
     return {"session_id": session_id, "cleared": removed}
 
 
