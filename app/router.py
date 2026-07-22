@@ -139,12 +139,19 @@ _DRAW_VERB = re.compile(
     r"(draw|paint|sketch|doodle)\s+(me\s+)?(a\s+|an\s+|some\s+)?(?P<subj>.+)$", re.I)
 _TRAILING_POLITE = re.compile(r"\s+(please|pls|for me|thanks|thank you)\.?$", re.I)
 _DRAW_PIC_OF = re.compile(
-    r"\b(pic|picture|photo|photograph|image|selfie|drawing|painting|sketch)\s+of\s+"
-    r"(?P<subj>.+)$", re.I)
+    r"\b(pics?|pictures?|photos?|photographs?|images?|selfies?|drawings?|"
+    r"paintings?|sketch(es)?)\s+of\s+(?P<subj>.+)$", re.I)
 # "send me a selfie", "send a pic" with no explicit subject -> a selfie of her.
 _DRAW_SELF = re.compile(
-    r"\b(send|show|take|make|share)\s+(me\s+)?(a\s+|your\s+|ur\s+)?"
-    r"(selfie|pic|picture|photo)\b", re.I)
+    r"\b(send|show|take|make|share)\s+(me\s+)?(a\s+|some\s+|your\s+|ur\s+)?"
+    r"(selfies?|pics?|pictures?|photos?)\b", re.I)
+# "another pic of her", "more images", "one more photo" - the plural/follow-up
+# form _DRAW_PIC_OF's own "of X" requirement doesn't catch on its own (mirrors
+# _SONG_FOLLOWUP; caught live: "send me more images of her" fell through to
+# chat because the singular-only pattern this used to be didn't match "images").
+_DRAW_FOLLOWUP = re.compile(
+    r"\b(another|one more|a different|more)\s+(pics?|pictures?|photos?|images?)\b",
+    re.I)
 
 
 def draw_subject(message: str) -> str | None:
@@ -156,7 +163,7 @@ def draw_subject(message: str) -> str | None:
     if m:
         subj = _TRAILING_POLITE.sub("", m.group("subj")).strip(" ?!.,\"'")
         return subj or "you"
-    if _DRAW_SELF.search(t):
+    if _DRAW_SELF.search(t) or _DRAW_FOLLOWUP.search(t):
         return "you"
     return None
 
