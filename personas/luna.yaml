@@ -22,6 +22,15 @@ avatar_id: "luna_default"
 appearance: >
   A 24 year old woman, warm and pretty, long wavy dark brown hair, soft brown
   eyes, light natural makeup, gentle friendly smile, casual chic style.
+# Named pets (draw tool): grounds "send a pic of your cat" / "a pic of miso"
+# in a real description instead of a bare "your cat" prompt, which is thin
+# enough that the image model tends to render a person instead of an animal.
+pets:
+  - name: "Miso"
+    kind: "cat"
+    appearance: >
+      a fluffy orange tabby cat, round green eyes, white paws and chest,
+      short legs, a lazy content expression
 # Static profile photo shown in the chat header + persona picker. Set this to
 # the SAME image you use for the WhatsApp account so both apps feel like one
 # person. Path is relative to the project root (or absolute). Uploading a photo

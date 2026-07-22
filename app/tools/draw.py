@@ -45,9 +45,30 @@ def _is_self_portrait(subject: str) -> bool:
     return bool(_BARE_SELF.match(s) or _SELF_REF.search(s))
 
 
+def _match_pet(subject: str, pets: list) -> dict | None:
+    """Does `subject` refer to one of the persona's named pets ('pixel',
+    'your dog', 'her cat')? Deliberately does NOT match a bare possessive
+    without a pet reference ('my dog') - that would be the USER's pet, which
+    she has no description for and shouldn't invent one for."""
+    s = subject.strip().lower()
+    for pet in pets:
+        if not isinstance(pet, dict):
+            continue
+        name = str(pet.get("name", "")).strip().lower()
+        kind = str(pet.get("kind", "")).strip().lower()
+        if name and name in s:
+            return pet
+        if kind and re.search(rf"\b(your|her|his|ur)\s+{re.escape(kind)}\b", s):
+            return pet
+    return None
+
+
 def _build_prompt(subject: str, ctx: ToolContext) -> tuple[str, bool]:
     """Return (image_prompt, is_selfie). Self-portrait requests are rebuilt
-    around the persona's appearance so 'send me your pic' looks like HER."""
+    around the persona's appearance so 'send me your pic' looks like HER;
+    a named-pet request is rebuilt around that pet's own description, same
+    reasoning - 'your dog' alone is thin enough that the image model tends
+    to render a person instead of an animal with nothing else to go on."""
     if _is_self_portrait(subject):
         appearance = getattr(ctx.persona, "appearance", "") or ""
         if not appearance:
@@ -56,6 +77,11 @@ def _build_prompt(subject: str, ctx: ToolContext) -> tuple[str, bool]:
                   f"Realistic photograph, phone selfie, soft lighting, looking "
                   f"at the camera, cozy everyday setting.")
         return prompt, True
+    pet = _match_pet(subject, getattr(ctx.persona, "pets", None) or [])
+    if pet:
+        prompt = (f"A candid natural photo of {pet.get('appearance', pet.get('kind', 'a pet'))}. "
+                  f"Realistic photograph, warm lighting, everyday home setting.")
+        return prompt, False
     return subject, False
 
 
