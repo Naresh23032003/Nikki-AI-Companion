@@ -84,11 +84,15 @@ async def execute(args: dict, ctx: ToolContext) -> dict:
         return {"ok": False, "result": f"the picture didn't come through ({e}). "
                                        f"Be honest it didn't work, stay casual."}
     if is_selfie:
-        result = ("you just took a cute selfie and it's ready to send - send it "
-                  "now with a short playful/teasing line, don't describe it")
+        result = ("you just took a cute selfie and it's already sending - add a short "
+                  "playful/teasing line if you want, but NEVER describe or caption the "
+                  "photo (no brackets like '[a selfie of...]') and NEVER ask if they "
+                  "want it - it's already gone, this isn't a question")
     else:
-        result = (f"you just drew '{subject}' and it's ready to send - send it now, "
-                  f"don't over-describe it in words, let the picture speak")
+        result = (f"you just drew '{subject}' and it's already sending - a short reaction "
+                  f"is fine, but NEVER describe or caption the picture in words (no "
+                  f"brackets like '[a drawing of...]') and NEVER ask if they want it - "
+                  f"it's already gone, this isn't a question")
     return {"ok": True,
             "image": {"url": f"/media/images/{path.name}", "path": str(path)},
             "result": result}

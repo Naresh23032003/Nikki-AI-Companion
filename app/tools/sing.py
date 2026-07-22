@@ -36,11 +36,14 @@ async def execute(args: dict, ctx: ToolContext) -> dict:
             ctx.db.set_setting("last_song_file", song["file"])
         if _AUTO_TITLE.match(title):
             return {"ok": True, "song": song,
-                    "result": "you have a song ready to send - it hasn't been given a "
+                    "result": "your song is already sending - it hasn't been given a "
                               "proper title yet, so tease that you found one without "
-                              "naming it, then send it"}
+                              "naming it. NEVER describe/caption the audio in brackets "
+                              "and NEVER ask if they want it - it's already gone"}
         return {"ok": True, "song": song,
-                "result": f"you have the song '{title}' ready - send it to them now"}
+                "result": f"'{title}' is already sending to them now - a short reaction "
+                          f"is fine, but NEVER describe/caption the audio in brackets and "
+                          f"NEVER ask if they want it - it's already gone, not a question"}
     if query:
         return {"ok": False, "queue_query": query,
                 "result": f"'{query}' isn't in your library - tell them you'll send it "
