@@ -35,7 +35,14 @@ that you'll sort it out / you're not sure - never invent an answer."""
 _ACTION_CLAIMS = re.compile(
     r"\b(i('ve| have)? (just )?(ordered|booked|paid|bought|scheduled|reserved)|"
     r"reminder('s| is)? (set|saved|done)|i set (a |the )?(reminder|alarm)|"
-    r"i checked (the )?(weather|news|price)|i looked it up|i searched)\b", re.I)
+    r"i checked (the )?(weather|news|price)|i looked it up|i searched|"
+    # Fabricated photo/song-send claims are just as ungrounded as "I booked
+    # it" - observed live: a model with no real tool result invented "i sent
+    # you a pic of dev with coffee outside your apartment at 2am" out of
+    # nowhere. Real sends already happen via the draw/sing tools same-turn;
+    # a reply CLAIMING a send with no tool_ran this turn is always false.
+    r"i('ve| have)? (just )?(sent|shared) (you |him |her )?(a |an )?"
+    r"(pic|picture|photo|image|song|track|video))\b", re.I)
 
 # honeypots: precise fact-claims that need a tool behind them
 _HONEYPOTS = re.compile(
@@ -72,6 +79,20 @@ _ASSISTANT_SPEAK = [
     (re.compile(r"^\s*[-*•]\s+\S", re.M), "bullet-list"),
     (re.compile(r"^\s*\d+[.)]\s+\S", re.M), "numbered-list"),
     (re.compile(r"^#{1,4}\s", re.M), "markdown-header"),
+    # Persona rule says "never use stage directions or bracketed asides like
+    # {smiles}" but nothing ever code-enforced it for SQUARE brackets - the
+    # model leaked a literal image caption ("[drawn image of a scruffy dog
+    # with a sarcastic expression]") straight into a WhatsApp reply instead of
+    # just sending the picture and texting normally.
+    (re.compile(r"\[[^\[\]\n]{2,120}\]"), "bracket-aside"),
+    # Asking permission to send something a tool already confirmed is ready
+    # ("send this one?") - the tool result already says send it NOW, not ask;
+    # a real person doesn't hand you a photo and then go "want this one?".
+    (re.compile(r"\b(send (this|that|it)( one)?\??$|"
+               r"should i send (it|this|that)\b|"
+               r"want me to send (it|this|that)\b|"
+               r"you want (it|this|that)( one)?\s*\?)", re.I | re.M),
+     "tentative-send"),
 ]
 
 # react-then-deliver reactions must not leak status language
@@ -100,6 +121,36 @@ def scan_forbidden_claims(reply: str, tool_ran: bool, db=None) -> list[str]:
     if hits:
         _bump(db, "forbidden_claim")
         logger.warning("guard: forbidden action-claims %s in %r", hits, reply[:80])
+    return hits
+
+
+def scan_identity_confusion(reply: str, other_names: list[str], db=None) -> list[str]:
+    """Caught live and it compounds badly: her own backstory friend's name
+    (injected via the day-state 'earlier today' note, see app/dayseed.py)
+    got used to address the ACTUAL person she's texting - "dev, chill out,
+    i'm here" to a total stranger, later escalating to flatly telling them
+    "dev is you!". Once a wrong name like this lands in stored history, the
+    model treats its own past mistake as fact and reinforces it further turn
+    after turn, so this needs a hard block, not just a prompt nudge.
+
+    `other_names` are the persona's own backstory characters (life.friends) -
+    people who exist in HER life, never valid names for whoever she's
+    actually talking to unless THEY said it themselves in this chat."""
+    hits: list[str] = []
+    for name in other_names:
+        name = (name or "").strip()
+        if not name or len(name) < 2:
+            continue
+        n = re.escape(name)
+        pat = re.compile(
+            rf"\b{n}\s+is\s+you\b|\byou('re| are)\s+{n}\b|"
+            rf"^\s*{n}\s*[,:]\s+\S|\bhey\s+{n}\b", re.I | re.M)
+        if pat.search(reply):
+            hits.append(name)
+    if hits:
+        _bump(db, "identity_confusion")
+        logger.warning("guard: identity confusion (used %s to address the user) in %r",
+                       hits, reply[:80])
     return hits
 
 

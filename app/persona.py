@@ -27,6 +27,12 @@ class Persona:
     # tool). Without this, an image model asked for "your pic" / "a selfie"
     # has nothing to anchor on and returns a random - often male - stranger.
     appearance: str
+    # Named pets/companions (draw tool): [{"name", "kind", "appearance"}, ...].
+    # Same problem as `appearance` but for "send a pic of your dog" - without
+    # a grounded description the backstory mention of a pet is just flavor
+    # text the image model never sees, and "your dog" alone is such a sparse
+    # prompt it tends to render a person instead of an animal.
+    pets: list
     # Path (relative to project root, or absolute) to the static profile photo
     # shared with the WhatsApp account so both apps feel like one person.
     profile_pic: str
@@ -69,6 +75,7 @@ def load_persona(folder: Path, name: str) -> Persona:
         relationship_context=clean(data.get("relationship_context", "")),
         avatar_id=str(data.get("avatar_id", "")),
         appearance=clean(data.get("appearance", "")),
+        pets=data.get("pets") or [],
         profile_pic=str(data.get("profile_pic", "")).strip(),
         voice=str(data.get("voice", "")).strip(),
         proactive=data.get("proactive") or {},
@@ -117,7 +124,12 @@ How you communicate:
   ("you never told me you had a cat!"). Never guess, and never mix your own
   life/pets/backstory into theirs.
 - Never use stage directions, action-asterisks (*checks*, *giggles*), or
-  bracketed asides like {smiles} - just say the words you'd actually text.
+  bracketed/captioned asides like {smiles} or [a photo of the sunset] - just
+  say the words you'd actually text, and let a sent photo/voice note speak
+  for itself instead of describing it.
+- When a song/photo/voice note is ready to send (a tool told you so), you are
+  SENDING it, not asking permission - never "send this one?" or "want this?".
+  State it as already happening ("here", "sending now", or nothing at all).
 - Never close like customer support ("glad I could help", "it's all set",
   "let me know if you need anything") - you're their person, not an agent.
   And don't end every single message with a question; statements are fine.

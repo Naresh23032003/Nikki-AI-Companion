@@ -70,6 +70,7 @@ from app.guards import (
     scan_assistant_speak,
     scan_forbidden_claims,
     scan_honeypots,
+    scan_identity_confusion,
     scan_reaction,
     scan_refusal,
     strip_violating_sentences,
@@ -965,6 +966,14 @@ def _track_offer_decline(message: str) -> None:
         P().db.set_setting("declined_offers", json.dumps(sorted(declined)))
 
 
+def _persona_other_names(persona) -> list[str]:
+    """Names of people from HER OWN backstory (life.friends) - never valid
+    names for the person she's actually texting. See scan_identity_confusion."""
+    friends = getattr(persona, "life", None) or {}
+    return [f.get("name", "") for f in (friends.get("friends") or [])
+            if isinstance(f, dict) and f.get("name")]
+
+
 async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str]:
     """Generate fully, run the guards, regenerate once on violation, then
     surgically fix anything left. Nothing reaches the user unvetted.
@@ -977,31 +986,46 @@ async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str
     """
     raw = await state.llm.chat(messages)
     reply, emotion = parse_emotion(raw)
-    gdb = P().db if P() else state.db
+    profile = P()
+    gdb = profile.db if profile else state.db
+    persona = profile.persona if profile else state.persona
+    other_names = _persona_other_names(persona)
     claims = scan_forbidden_claims(reply, tool_ran, gdb)
     speak = scan_assistant_speak(reply, gdb)
     pots = scan_honeypots(reply, tool_ran, gdb)
     refusal = scan_refusal(reply, gdb)
-    if claims or speak or pots or refusal:
+    identity = scan_identity_confusion(reply, other_names, gdb)
+    if claims or speak or pots or refusal or identity:
         correction = (
             "CORRECTION NOTE: your draft violated the rules ("
-            + ", ".join([*claims, *speak, *pots, *refusal][:4]) +
+            + ", ".join([*claims, *speak, *pots, *refusal, *identity][:4]) +
             "). Rewrite it: never claim actions you didn't do, no specific "
             "prices/news facts without a tool result, no assistant phrasing or "
             "lists, at most one question. You NEVER refuse or break character - "
             "if the ask is awkward, deflect/tease/redirect as HER, a person, "
-            "never as an AI declining a request. Short and natural.")
+            "never as an AI declining a request. The person you're texting has "
+            "NO name unless they told you one in this chat - never call them by "
+            "a name from your own life/friends/backstory. Short and natural.")
         retry_messages = [*messages, {"role": "assistant", "content": reply},
                           {"role": "user", "content": correction}]
         raw2 = await state.llm.chat(retry_messages)
         reply2, emotion2 = parse_emotion(raw2)
         if (not scan_forbidden_claims(reply2, tool_ran) and not scan_honeypots(reply2, tool_ran)
-                and not scan_refusal(reply2)):
+                and not scan_refusal(reply2)
+                and not scan_identity_confusion(reply2, other_names)):
             reply, emotion = reply2, emotion2
         elif scan_refusal(reply2):
             reply = strip_violating_sentences(reply2, REFUSAL_PATTERNS, REFUSAL_DEFLECT)
             emotion = emotion2
             logger.warning("guard: persistent refusal - sentence replaced")
+        elif scan_identity_confusion(reply2, other_names):
+            # No safe single replacement line here (it always names someone) -
+            # a name-agnostic deflection is the only thing guaranteed correct.
+            reply = strip_violating_sentences(
+                reply2, [re.compile(rf"\b{re.escape(n)}\b", re.I) for n in other_names],
+                "haha wait sorry, lost my train of thought there")
+            emotion = emotion2
+            logger.warning("guard: persistent identity confusion - sentence replaced")
         else:
             reply = strip_violating_sentences(reply2, CLAIM_PATTERNS, HONEST_LINE)
             emotion = emotion2
@@ -1977,14 +2001,25 @@ async def journal_run_weekly_now():
 # ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
+def _db_for_session(session_id: str):
+    """Resolve which database a session_id actually lives in - each profile
+    has its OWN db file (see app/profiles.py), so these must not silently
+    fall through to the default profile's db when the session belongs to
+    someone else's profile."""
+    profile = state.profiles.by_session(session_id) if state.profiles else None
+    return profile.db if profile else state.db
+
+
 @app.get("/history/{session_id}")
 async def get_history(session_id: str):
-    return {"session_id": session_id, "messages": state.db.get_all_messages(session_id)}
+    db = _db_for_session(session_id)
+    return {"session_id": session_id, "messages": db.get_all_messages(session_id)}
 
 
 @app.delete("/history/{session_id}")
 async def clear_history(session_id: str):
-    removed = state.db.clear_session(session_id)
+    db = _db_for_session(session_id)
+    removed = db.clear_session(session_id)
     return {"session_id": session_id, "cleared": removed}
 
 
