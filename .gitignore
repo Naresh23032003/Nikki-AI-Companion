@@ -23,6 +23,15 @@ chroma_db/
 *.log
 companion.log*
 backups/
+# Pre-migration safety copies (see HOST_VERIFICATION.md §0) - same real-data
+# sensitivity as companion*.db above, just with a suffix the glob above
+# doesn't already cover.
+*.pre-migration.bak
+*.pre-migration.bak/
+chroma_db.pre-migration.bak/
+
+# ---- Stray editor/FUSE artifacts (Linux mount leftovers, not project files) ----
+.fuse_hidden*
 
 # ---- Personal voice data (never publish: recordings, datasets, trained models) ----
 voice_tracks/
