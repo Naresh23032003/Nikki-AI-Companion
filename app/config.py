@@ -66,6 +66,8 @@ class Settings:
     router: Dict[str, Any] = field(default_factory=dict)
     behavior: Dict[str, Any] = field(default_factory=dict)
     journal: Dict[str, Any] = field(default_factory=dict)
+    # N9: real phone number, behind a provider abstraction (app/telephony.py).
+    telephony: Dict[str, Any] = field(default_factory=dict)
     host: str = "0.0.0.0"
     port: int = 8000
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -129,6 +131,7 @@ def load_settings(config_path: Path = CONFIG_PATH) -> Settings:
         router=data.get("router", {}) or {},
         behavior=data.get("behavior", {}) or {},
         journal=data.get("journal", {}) or {},
+        telephony=data.get("telephony", {}) or {},
         host=server.get("host", "0.0.0.0"),
         port=int(server.get("port", 8000)),
         raw=data,

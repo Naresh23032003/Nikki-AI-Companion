@@ -43,6 +43,38 @@ def _run_unittests(module: str) -> tuple[str, bool]:
     return f"{passed}/{n} tests passed", ok
 
 
+def _run_memory_eval() -> tuple[str, bool]:
+    """Scenario-level memory evaluation (N1): extraction, knowledge updates,
+    temporal correctness, multi-session recall and abstention."""
+    import tempfile
+
+    from tests.memory_eval import run_eval
+
+    with tempfile.TemporaryDirectory() as tmp:
+        results = run_eval(Path(tmp))
+
+    parts, ok = [], True
+    total_pass = total_all = 0
+    for category, r in sorted(results.items()):
+        total_pass += r["pass"]
+        total_all += r["total"]
+        ok = ok and r["pass"] == r["total"]
+        parts.append(f"{category} {r['pass']}/{r['total']}")
+    header = f"{total_pass}/{total_all} scenarios"
+    return f"{header} ({', '.join(parts)})", ok
+
+
+def _run_pytest(path: str) -> tuple[str, bool]:
+    """Run a pytest module and report its counts."""
+    import pytest
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = pytest.main([str(ROOT / path), "-q", "--no-header"])
+    tail = [ln for ln in buf.getvalue().splitlines() if "passed" in ln or "failed" in ln]
+    return (tail[-1].strip() if tail else "no output"), rc == 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--llm", action="store_true", help="also run Ollama-backed evals")
@@ -63,6 +95,22 @@ def main() -> int:
         ("journal patterns", "tests.test_journal_patterns"),
     ]:
         summary, ok = _run_unittests(mod)
+        print(f"\n[{label}] {summary}")
+        results.append((label, summary, ok))
+
+    # N1: memory architecture. Scenario eval + the unit suites behind it.
+    summary, ok = _run_memory_eval()
+    print(f"\n[memory scenarios] {summary}")
+    results.append(("memory scenarios", summary, ok))
+
+    for label, path in [
+        ("memory core", "tests/test_memory_core.py"),
+        ("memory schema", "tests/test_memory_schema.py"),
+        # N2: behaviour extracted from main.py, previously untested.
+        ("conversation notes", "tests/test_conversation_notes.py"),
+        ("bubbles + timing", "tests/test_bubbles_and_timing.py"),
+    ]:
+        summary, ok = _run_pytest(path)
         print(f"\n[{label}] {summary}")
         results.append((label, summary, ok))
 

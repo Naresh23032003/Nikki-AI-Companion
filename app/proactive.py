@@ -158,7 +158,8 @@ class ProactiveEngine:
     """Plans and sends proactive check-ins; owns the APScheduler instance."""
 
     def __init__(self, db, llm, memory, get_persona, settings,
-                 now_fn=datetime.now, relationship=None, tools=None):
+                 now_fn=datetime.now, relationship=None, tools=None,
+                 session_id=None, number=None):
         self.db = db
         self.llm = llm
         self.memory = memory
@@ -167,6 +168,13 @@ class ProactiveEngine:
         self.now = now_fn
         self.relationship = relationship  # RelationshipTracker | None
         self.tools = tools  # ToolRunner | None - same tools chat/WhatsApp use
+        # This profile's own session + WhatsApp number. Without these, every
+        # profile's engine fell back to settings.wa_session_id (always "main")
+        # and posted to the bridge with no "to" field at all, which the
+        # bridge then defaults to ITS first target - i.e. a non-default
+        # profile's proactive messages would misdeliver to the WRONG person.
+        self.session_id = session_id or settings.wa_session_id
+        self.number = number
         self.scheduler = AsyncIOScheduler()
         self._planned_today: list[str] = []
 
@@ -363,7 +371,7 @@ class ProactiveEngine:
         """Send one proactive message unless a skip condition applies."""
         cfg = self.config()
         now = self.now()
-        session_id = self.settings.wa_session_id
+        session_id = self.session_id
 
         if not cfg.enabled:
             logger.info("proactive: SKIP (%s) - disabled", intent)
@@ -407,7 +415,7 @@ class ProactiveEngine:
     async def fire_followup(self, attempt: int) -> bool:
         """Escalating follow-up if they never replied; sulk after the 2nd."""
         cfg = self.config()
-        session_id = self.settings.wa_session_id
+        session_id = self.session_id
         sent_ts = self.db.get_setting("proactive_last_sent")
         activity = self.db.get_last_activity(session_id)
         user_h = _hours_since(activity["last_user_ts"])
@@ -569,9 +577,11 @@ class ProactiveEngine:
                                     audio_url=song["url"])
                 try:
                     from app.covers import LIBRARY
+                    payload = {"wav_path": str(LIBRARY / song["file"])}
+                    if self.number:
+                        payload["to"] = self.number
                     async with httpx.AsyncClient(timeout=30.0) as c:
-                        await c.post(f"{self.settings.wa_bridge_url}/send-voice",
-                                     json={"wav_path": str(LIBRARY / song["file"])})
+                        await c.post(f"{self.settings.wa_bridge_url}/send-voice", json=payload)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -588,13 +598,18 @@ class ProactiveEngine:
             self.db.add_message(session_id, "assistant", "", sticker_url=sticker[1], source="whatsapp")
 
         try:
+            text_payload = {"text": text}
+            if self.number:
+                text_payload["to"] = self.number
             async with httpx.AsyncClient(timeout=10.0) as c:
-                r = await c.post(f"{self.settings.wa_bridge_url}/send-text",
-                                 json={"text": text})
+                r = await c.post(f"{self.settings.wa_bridge_url}/send-text", json=text_payload)
                 r.raise_for_status()
                 if sticker:
+                    sticker_payload = {"path": str(sticker[0])}
+                    if self.number:
+                        sticker_payload["to"] = self.number
                     await c.post(f"{self.settings.wa_bridge_url}/send-sticker",
-                                 json={"path": str(sticker[0])})
+                                json=sticker_payload)
         except Exception as e:  # noqa: BLE001
             logger.info("proactive: bridge unreachable (%s) - stored for web only", e)
 

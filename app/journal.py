@@ -1,14 +1,19 @@
 """Passive daily mood journal: she infers the USER's moods from the day's
 conversations and logs them - never by asking, never with surveys.
 
-Three jobs:
+Four jobs, three layers (N5-adjacent N6 rework: separates raw experience from
+derived reflection from what's still open, instead of leaving "did anything
+ever come of that" as a gap no layer covered):
+
+  EXPERIENCE (needs a model - the only step that does):
   - Nightly extraction (config: journal.nightly_time, default 23:45): pulls
     every message from every source (web chat/call/WhatsApp/tablet/iot) for
     the local calendar day just ending, and asks the LOCAL model to pull out
     mood entries grounded in concrete evidence (this data is intimate - never
     sent to the cloud brain). Quiet/flat days correctly yield 0-1 entries -
-    the evidence rule below forbids filling rows. This is the ONLY step that
-    needs a model: turning raw conversation into structured mood rows.
+    the evidence rule below forbids filling rows.
+
+  REFLECTION (pure code - patterns across many entries):
   - Nightly streak check (run_recent_streak_check, chained after extraction):
     flags a CURRENT 2-3 day rough stretch as a one-shot "Streak:" memory.
   - Weekly pattern-awareness (config: journal.weekly_pattern_day/time,
@@ -16,12 +21,23 @@ Three jobs:
     category="relationship" "Pattern:" memories, referenced naturally later
     (never as a report/stats-speak - see app/main.py's _pattern_note).
 
-The streak + pattern layers are PURE CODE (no model): they run over rows that
-are already structured (date, mood_label, intensity, why), so it's counting
-and grouping - deterministic, unit-testable, zero hallucination risk. The
-stored sentences are plain and factual on purpose: she rephrases them in her
-own voice at reference time anyway (the _pattern_note/_streak_note prompt
-notes), so model-written prose here bought nothing but failure modes.
+  UNRESOLVED (pure code - one specific concern, not an aggregate):
+  - Nightly unresolved-concern check (run_unresolved_check, chained after the
+    streak check): a negative-mood entry whose specific topic (by content-word
+    overlap of its `why`) never came up again in any later entry is a concern
+    that was logged and then just... never followed up on - distinct from
+    both a streak (aggregate mood over consecutive days) and a pattern
+    (a label recurring across weeks). Stored as a one-shot "Unresolved:"
+    memory, consumed the first time she checks in on it
+    (app/conversation/notes.py's unresolved_note).
+
+The streak/pattern/unresolved layers are all PURE CODE (no model): they run
+over rows that are already structured (date, mood_label, intensity, why), so
+it's counting, grouping and token-overlap - deterministic, unit-testable,
+zero hallucination risk. The stored sentences are plain and factual on
+purpose: she rephrases them in her own voice at reference time anyway (the
+_pattern_note/_streak_note/_unresolved_note prompt notes), so model-written
+prose here bought nothing but failure modes.
 
 See app/db.py for the mood_journal table + CRUD.
 """
@@ -387,4 +403,98 @@ async def run_recent_streak_check(db, memory, settings=None, lookback_days: int 
 
     memory_id = await memory.add_fact(f"Streak: {text}", "relationship", source="mood_journal")
     logger.info("journal: streak check - flagged %r (memory #%s)", text, memory_id)
+    return memory_id is not None
+
+
+# ---------------------------------------------------------------------------
+# Unresolved concerns (the "unresolved" layer - see module docstring)
+# ---------------------------------------------------------------------------
+
+_TOPIC_STOP = {
+    "the", "a", "an", "is", "are", "was", "were", "to", "of", "in", "on",
+    "at", "for", "and", "or", "but", "with", "about", "that", "this", "it",
+    "they", "their", "them", "said", "felt", "feels", "feeling", "seemed",
+    "really", "very", "just", "still", "today", "yesterday", "again",
+}
+
+
+def _topic_words(why: str) -> set[str]:
+    """Content words from a `why` field - a crude but dependency-free topic
+    fingerprint (same idea as app/conversation/tells.py's _content(), applied
+    to journal entries rather than replies; kept local rather than imported
+    to avoid coupling the journal and conversation-engine layers)."""
+    raw = "".join(c.lower() if c.isalnum() else " " for c in (why or "")).split()
+    return {w for w in raw if w not in _TOPIC_STOP and len(w) > 2}
+
+
+def _find_unresolved_concern(
+    entries: list[dict], today, *, min_silent_days: int = 3,
+    max_age_days: int = 14, min_shared_words: int = 2,
+) -> dict | None:
+    """A negative entry between `min_silent_days` and `max_age_days` old whose
+    topic never recurs in any LATER entry (any valence - a later mention,
+    even a negative one, means it's already being talked through, which is
+    not the gap this exists to catch).
+
+    Among eligible concerns, picks highest intensity first (most worth
+    checking on), then most recent (most likely still relevant to raise).
+    Returns None if nothing qualifies - a quiet journal correctly yields
+    nothing, same evidence-over-invention discipline as extraction."""
+    cutoff_old = today - timedelta(days=max_age_days)
+    cutoff_recent = today - timedelta(days=min_silent_days)
+
+    by_date = sorted(entries, key=lambda e: e["date"])
+    candidates = []
+    for i, entry in enumerate(by_date):
+        if not _is_negative_mood(entry.get("mood_label", "")):
+            continue
+        entry_date = datetime.fromisoformat(entry["date"]).date()
+        if not (cutoff_old < entry_date <= cutoff_recent):
+            continue
+        topic = _topic_words(entry.get("why", ""))
+        if len(topic) < min_shared_words:
+            continue  # too little content to fingerprint reliably
+        later = by_date[i + 1:]
+        mentioned_again = any(
+            len(topic & _topic_words(later_entry.get("why", ""))) >= min_shared_words
+            for later_entry in later
+        )
+        if not mentioned_again:
+            candidates.append(entry)
+
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda e: (int(e.get("intensity") or 0), e["date"]), reverse=True)
+    return candidates[0]
+
+
+async def run_unresolved_check(db, memory, settings=None, *,
+                               min_silent_days: int = 3,
+                               max_age_days: int = 14) -> bool:
+    """Nightly check (chained after the streak check) for a specific concern
+    that was logged and never mentioned again. One-shot, same guard-against-
+    stacking pattern as run_recent_streak_check: never queue a second
+    'Unresolved:' memory while one is still waiting to be raised."""
+    existing = [m for m in db.list_memories_by_category("relationship")
+               if (m.get("fact") or "").startswith("Unresolved:")]
+    if existing:
+        return False
+
+    lookback = (datetime.now().date()
+               - timedelta(days=max_age_days)).isoformat()
+    entries = db.list_mood_entries(since_date=lookback)
+    concern = _find_unresolved_concern(
+        entries, datetime.now().date(),
+        min_silent_days=min_silent_days, max_age_days=max_age_days)
+    if concern is None:
+        return False
+
+    why = (concern.get("why") or "").strip().rstrip(".")
+    text = (f"On {concern['date']}, they mentioned feeling "
+            f"{concern.get('mood_label', 'off')} - {why}. It never came up "
+            f"again after that.")
+    memory_id = await memory.add_fact(f"Unresolved: {text}", "relationship",
+                                      source="mood_journal")
+    logger.info("journal: unresolved check - flagged %r (memory #%s)", text, memory_id)
     return memory_id is not None

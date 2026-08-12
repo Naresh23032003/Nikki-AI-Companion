@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
+import { useEscapeToClose } from '../hooks/useEscapeToClose.js'
 
 const MOOD_COLORS = {
   happy: '#7cd4a3', content: '#7cd4a3', grateful: '#7cd4a3', proud: '#7cd4a3',
@@ -23,6 +24,7 @@ function groupByDate(entries) {
 }
 
 export default function MoodJournal({ onClose }) {
+  useEscapeToClose(onClose)
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [moodFilter, setMoodFilter] = useState('')
@@ -68,12 +70,13 @@ export default function MoodJournal({ onClose }) {
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="journal-title"
+        onClick={(e) => e.stopPropagation()}>
         <div className="sheet-head">
           <button className="icon-btn" onClick={onClose} aria-label="Back">
             <BackIcon />
           </button>
-          <h2>Mood journal</h2>
+          <h2 id="journal-title">Mood journal</h2>
         </div>
 
         <div className="sheet-body">

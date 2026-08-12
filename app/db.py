@@ -9,13 +9,16 @@ app is single-process, so this is plenty for a local companion.
 """
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
+
+logger = logging.getLogger("companion.db")
 
 
 def _utcnow() -> str:
@@ -240,11 +243,53 @@ class Database:
                 ("valid_from", "TEXT"),
                 ("valid_until", "TEXT"),
                 ("source", "TEXT"),
+                # --- memory scoring / bi-temporal supersession (see memory_core.py) ---
+                # importance + confidence drive reranking; superseded_by and
+                # t_invalid let a corrected fact be retired without deleting it,
+                # so "where do I work" and "where did I work" are both answerable.
+                ("importance", "REAL NOT NULL DEFAULT 0.5"),
+                ("confidence", "REAL NOT NULL DEFAULT 0.7"),
+                ("superseded_by", "INTEGER"),
+                ("superseded_at", "TEXT"),
+                ("t_invalid", "TEXT"),
+                ("reinforced_count", "INTEGER NOT NULL DEFAULT 0"),
             ]:
                 if column not in mem_cols:
                     self._conn.execute(f"ALTER TABLE memories ADD COLUMN {column} {ddl}")
             self._conn.execute("UPDATE memories SET kind = 'permanent' WHERE kind IS NULL OR kind = ''")
             self._conn.execute("UPDATE memories SET source = 'webapp_chat' WHERE source IS NULL OR source = ''")
+            # Backfill scores for rows that predate the scoring columns. Done
+            # here rather than lazily so ranking behaves consistently from the
+            # first request after upgrade.
+            self._conn.execute(
+                "UPDATE memories SET importance = 0.5 WHERE importance IS NULL")
+            self._conn.execute(
+                "UPDATE memories SET confidence = 0.7 WHERE confidence IS NULL")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_active "
+                "ON memories(superseded_by, kind)")
+
+            # Append-only history of every change to a memory. The previous
+            # implementation overwrote facts in place, so a mistaken merge was
+            # unrecoverable and corrections left no trace.
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_revisions (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id      INTEGER NOT NULL,
+                    previous_fact  TEXT NOT NULL,
+                    new_fact       TEXT,
+                    operation      TEXT NOT NULL,
+                    reason         TEXT,
+                    created_at     TEXT NOT NULL
+                );
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memory_revisions_memory "
+                "ON memory_revisions(memory_id, created_at DESC)")
+
+            self._init_memory_fts()
 
             rem_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(reminders)")}
             for column, ddl in [
@@ -700,6 +745,164 @@ class Database:
             )
             self._conn.commit()
 
+    # ------------------------------------------------------------------
+    # Lexical retrieval channel (SQLite FTS5)
+    # ------------------------------------------------------------------
+    def _init_memory_fts(self) -> None:
+        """Full-text index over memory facts, kept in sync by triggers.
+
+        This is the lexical half of hybrid retrieval. Vector search alone
+        misses exact-token queries - asking "what's my sister called" would
+        only surface Meera if the embedding happened to rank it, whereas FTS5
+        matches the literal token. FTS5 ships with SQLite, so this costs no new
+        dependency and no new service.
+
+        Wrapped in a try/except because a Python build without FTS5 must
+        degrade to vector-only rather than break the whole app on startup.
+        """
+        try:
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts "
+                "USING fts5(fact, content='memories', content_rowid='id', "
+                "tokenize='porter unicode61')"
+            )
+            for name, body in [
+                ("memories_fts_ai",
+                 "AFTER INSERT ON memories BEGIN "
+                 "INSERT INTO memories_fts(rowid, fact) VALUES (new.id, new.fact); END"),
+                ("memories_fts_ad",
+                 "AFTER DELETE ON memories BEGIN "
+                 "INSERT INTO memories_fts(memories_fts, rowid, fact) "
+                 "VALUES('delete', old.id, old.fact); END"),
+                ("memories_fts_au",
+                 "AFTER UPDATE OF fact ON memories BEGIN "
+                 "INSERT INTO memories_fts(memories_fts, rowid, fact) "
+                 "VALUES('delete', old.id, old.fact); "
+                 "INSERT INTO memories_fts(rowid, fact) VALUES (new.id, new.fact); END"),
+            ]:
+                self._conn.execute(f"CREATE TRIGGER IF NOT EXISTS {name} {body}")
+            # Backfill for databases that existed before the index did.
+            row = self._conn.execute("SELECT count(*) AS n FROM memories_fts").fetchone()
+            if row and int(row["n"]) == 0:
+                self._conn.execute(
+                    "INSERT INTO memories_fts(rowid, fact) SELECT id, fact FROM memories")
+            self._fts_enabled = True
+        except sqlite3.Error as e:  # noqa: BLE001 - degrade, never crash startup
+            logger.warning("FTS5 unavailable, lexical retrieval disabled: %s", e)
+            self._fts_enabled = False
+
+    def search_memories_lexical(self, query: str, limit: int = 20) -> List[int]:
+        """Memory ids matching `query` lexically, best first. [] if FTS is off."""
+        if not getattr(self, "_fts_enabled", False):
+            return []
+        # FTS5 treats most punctuation as syntax; feed it bare OR-ed tokens so a
+        # natural-language question can't produce a malformed MATCH expression.
+        tokens = [t for t in re.findall(r"[A-Za-z0-9']+", query) if len(t) > 2]
+        if not tokens:
+            return []
+        expr = " OR ".join(f'"{t}"' for t in tokens)
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? "
+                    "ORDER BY rank LIMIT ?",
+                    (expr, limit),
+                ).fetchall()
+            return [int(r["rowid"]) for r in rows]
+        except sqlite3.Error as e:  # noqa: BLE001 - retrieval must never break chat
+            logger.warning("Lexical memory search failed: %s", e)
+            return []
+
+    # ------------------------------------------------------------------
+    # Scoring and bi-temporal supersession
+    # ------------------------------------------------------------------
+    def set_memory_scores(self, memory_id: int, importance: float | None = None,
+                          confidence: float | None = None) -> None:
+        sets, params = [], []
+        if importance is not None:
+            sets.append("importance = ?")
+            params.append(max(0.0, min(1.0, float(importance))))
+        if confidence is not None:
+            sets.append("confidence = ?")
+            params.append(max(0.0, min(1.0, float(confidence))))
+        if not sets:
+            return
+        params.append(memory_id)
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE memories SET {', '.join(sets)} WHERE id = ?", params)
+            self._conn.commit()
+
+    def reinforce_memory(self, memory_id: int, confidence: float) -> None:
+        """Record an independent restatement of a fact we already hold."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE memories SET reinforced_count = reinforced_count + 1, "
+                "confidence = ?, last_accessed = ? WHERE id = ?",
+                (max(0.0, min(1.0, float(confidence))), _utcnow(), memory_id),
+            )
+            self._conn.commit()
+
+    def supersede_memory(self, old_id: int, new_id: int, reason: str = "") -> None:
+        """Retire `old_id` in favour of `new_id` without deleting it.
+
+        The old row keeps its text and becomes invisible to retrieval
+        (superseded_by is set), but stays readable for history questions and
+        for undoing a bad merge. This is the bi-temporal alternative to the
+        previous behaviour, which overwrote the old fact and lost it.
+        """
+        now = _utcnow()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT fact FROM memories WHERE id = ?", (old_id,)).fetchone()
+            if row is None:
+                return
+            new_row = self._conn.execute(
+                "SELECT fact FROM memories WHERE id = ?", (new_id,)).fetchone()
+            self._conn.execute(
+                "UPDATE memories SET superseded_by = ?, superseded_at = ?, "
+                "t_invalid = ? WHERE id = ?",
+                (new_id, now, now, old_id),
+            )
+            self._conn.execute(
+                "INSERT INTO memory_revisions "
+                "(memory_id, previous_fact, new_fact, operation, reason, created_at) "
+                "VALUES (?, ?, ?, 'supersede', ?, ?)",
+                (old_id, row["fact"], new_row["fact"] if new_row else None,
+                 reason, now),
+            )
+            self._conn.commit()
+
+    def record_revision(self, memory_id: int, previous_fact: str,
+                        new_fact: str | None, operation: str,
+                        reason: str = "") -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO memory_revisions "
+                "(memory_id, previous_fact, new_fact, operation, reason, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (memory_id, previous_fact, new_fact, operation, reason, _utcnow()),
+            )
+            self._conn.commit()
+
+    def get_memory_history(self, memory_id: int) -> List[Dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM memory_revisions WHERE memory_id = ? "
+                "ORDER BY created_at DESC", (memory_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_active_memories(self, limit: int | None = None) -> List[Dict]:
+        """Memories eligible for retrieval - superseded ones excluded."""
+        sql = "SELECT * FROM memories WHERE superseded_by IS NULL ORDER BY created_at DESC"
+        params: tuple = ()
+        if limit:
+            sql += " LIMIT ?"
+            params = (limit,)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
     def complete_memory(self, memory_id: int) -> bool:
         """Mark an event/transient memory as done - it stops being injected.
 
@@ -1152,6 +1355,57 @@ class Database:
                 self._conn.backup(dest)
             finally:
                 dest.close()
+
+    # ------------------------------------------------------------------
+    # Data portability + erasure (N10: one profile = one db file, so
+    # "everything in this file" is the correct, complete scope - no
+    # per-session filtering needed the way messages queries elsewhere use).
+    # ------------------------------------------------------------------
+    def export_all_data(self) -> Dict[str, Any]:
+        """Full JSON-able dump of everything stored about this profile."""
+        tables = ("messages", "memories", "entities", "relations",
+                 "mood_journal", "memory_revisions", "reminders",
+                 "event_followups")
+        out: Dict[str, Any] = {"exported_at": _utcnow()}
+        with self._lock:
+            for table in tables:
+                try:
+                    rows = self._conn.execute(
+                        f"SELECT * FROM {table} ORDER BY id").fetchall()
+                except sqlite3.OperationalError:
+                    rows = []  # table absent in an older schema version
+                out[table] = [dict(r) for r in rows]
+        # get_relationship() auto-creates the row on first access (same
+        # convention used everywhere else it's read) instead of raw SQL that
+        # would silently export {} for a profile whose relationship row
+        # hasn't been touched yet despite the app having run.
+        out["relationship"] = self.get_relationship()
+        return out
+
+    def delete_all_data(self) -> None:
+        """Irreversibly erase everything stored about this profile (N10,
+        'right to erasure'). Resets relationship_state to its defaults rather
+        than deleting the row (schema requires exactly one row, id=1).
+
+        Does NOT touch the Chroma vector collection - callers must also wipe
+        that (see app.memory.MemoryStore.wipe_all), kept separate because
+        this method has no access to the Chroma client.
+        """
+        tables = ("messages", "sessions", "memories", "entities", "relations",
+                 "mood_journal", "memory_revisions", "reminders",
+                 "event_followups", "day_state", "deferred_tasks",
+                 "tool_call_log", "device_presence", "app_settings")
+        with self._lock:
+            for table in tables:
+                try:
+                    self._conn.execute(f"DELETE FROM {table}")
+                except sqlite3.OperationalError:
+                    pass  # table absent in an older schema version
+            self._conn.execute(
+                "UPDATE relationship_state SET stage = 'stranger', "
+                "affection = 5.0, started_at = ?, days_known = 0, "
+                "meaningful_exchanges = 0 WHERE id = 1", (_utcnow(),))
+            self._conn.commit()
 
     def close(self) -> None:
         with self._lock:
