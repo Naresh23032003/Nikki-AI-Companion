@@ -28,6 +28,7 @@ services:
       # Lite defaults; override to taste. A smaller model (e.g. llama3.2:1b)
       # responds faster on CPU.
       OLLAMA_MODEL: llama3.2:3b
+      # OLLAMA_EXTRACT_MODEL: llama3.2:1b
       OLLAMA_EMBED_MODEL: nomic-embed-text
     ports:
       - "8000:8000"
