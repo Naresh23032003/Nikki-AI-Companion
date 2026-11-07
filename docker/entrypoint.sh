@@ -6,6 +6,7 @@ set -e
 OLLAMA="${OLLAMA_BASE_URL:-http://ollama:11434}"
 CHAT_MODEL="${OLLAMA_MODEL:-llama3.2:3b}"
 EMBED_MODEL="${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
+EXTRACT_MODEL="${OLLAMA_EXTRACT_MODEL:-$CHAT_MODEL}"
 
 echo "companion: waiting for Ollama at $OLLAMA ..."
 until curl -sf "$OLLAMA/api/tags" >/dev/null 2>&1; do
@@ -21,6 +22,9 @@ pull() {
 }
 pull "$CHAT_MODEL"
 pull "$EMBED_MODEL"
+if [ "$EXTRACT_MODEL" != "$CHAT_MODEL" ]; then
+  pull "$EXTRACT_MODEL"
+fi
 
 echo "companion: starting API on :8000"
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000

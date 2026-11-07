@@ -87,6 +87,10 @@ def load_settings(config_path: Path = CONFIG_PATH) -> Settings:
         ollama["model"] = os.environ["OLLAMA_MODEL"]
     if os.environ.get("OLLAMA_EMBED_MODEL"):
         ollama["embed_model"] = os.environ["OLLAMA_EMBED_MODEL"]
+    if os.environ.get("OLLAMA_EXTRACT_MODEL"):
+        ollama["extract_model"] = os.environ["OLLAMA_EXTRACT_MODEL"]
+    elif os.environ.get("OLLAMA_MODEL"):
+        ollama["extract_model"] = os.environ["OLLAMA_MODEL"]
     # Let the DB + vector store live on a mounted volume in Docker.
     db_override = os.environ.get("COMPANION_DB_PATH")
     chroma_override = os.environ.get("CHROMA_PATH")
