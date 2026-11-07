@@ -60,6 +60,7 @@ def main() -> int:
 
     for label, mod in [
         ("temporal memory", "tests.test_temporal_memory"),
+        ("config env", "tests.test_config_env"),
         ("journal patterns", "tests.test_journal_patterns"),
         ("fake ollama", "tests.test_fake_ollama"),
     ]:
