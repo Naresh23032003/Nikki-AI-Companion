@@ -62,6 +62,7 @@ def main() -> int:
         ("temporal memory", "tests.test_temporal_memory"),
         ("config env", "tests.test_config_env"),
         ("journal patterns", "tests.test_journal_patterns"),
+        ("fake ollama", "tests.test_fake_ollama"),
     ]:
         summary, ok = _run_unittests(mod)
         print(f"\n[{label}] {summary}")
