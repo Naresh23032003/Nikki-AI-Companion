@@ -61,6 +61,7 @@ def main() -> int:
     for label, mod in [
         ("temporal memory", "tests.test_temporal_memory"),
         ("journal patterns", "tests.test_journal_patterns"),
+        ("fake ollama", "tests.test_fake_ollama"),
     ]:
         summary, ok = _run_unittests(mod)
         print(f"\n[{label}] {summary}")
