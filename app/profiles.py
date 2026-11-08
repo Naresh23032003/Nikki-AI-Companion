@@ -32,10 +32,20 @@ Config (config.yaml):
 
 With no `profiles:` block the app falls back to one implicit profile using
 persona.active + the existing db/collection, i.e. exactly the old behavior.
+
+N10 (2026-08-09): a real phone number in config.yaml is PII sitting in a file
+that gets committed (README/CI/Docker all expect it tracked - see
+IMPLEMENTATION_LOG.md for why untracking it outright would have broken the
+Dockerfile's `COPY config.yaml ./` and CI's Docker job). Set
+`COMPANION_NUMBER_<ID>` (uppercased profile id, e.g. `COMPANION_NUMBER_MAIN`)
+in `.env` (already gitignored) to override a profile's number without ever
+writing the real one into a tracked file - config.yaml can keep a placeholder
+and the app still routes correctly.
 """
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -139,7 +149,10 @@ def load_profiles(settings) -> ProfileRegistry:
             logger.warning("profiles: skipping non-dict entry %r", entry)
             continue
         pid = _slug(entry.get("id") or entry.get("persona") or "profile")
-        number = normalize_number(entry.get("number", ""))
+        # Env override wins (see module docstring, N10) - lets the real
+        # number live in .env instead of the tracked config.yaml.
+        env_number = os.environ.get(f"COMPANION_NUMBER_{pid.upper()}")
+        number = normalize_number(env_number if env_number else entry.get("number", ""))
         persona_id = str(entry.get("persona") or settings.persona_active)
         if not number:
             logger.warning("profiles: %r has no number - skipped", pid)

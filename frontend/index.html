@@ -2,9 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- N11: user-scalable=no/maximum-scale=1.0 was blocking pinch-zoom, a
+         well-documented WCAG 1.4.4/1.4.10 accessibility failure that
+         actively harms low-vision users - "app-like" is not a reason to
+         override it; neither iOS nor Android guidance recommends this
+         anymore. viewport-fit=cover (notch/safe-area support) kept. -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="theme-color" content="#111b21" />
     <meta name="description" content="Your personal AI companion" />

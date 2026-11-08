@@ -29,6 +29,17 @@ from chromadb.config import Settings as ChromaSettings
 from app.config import Settings
 from app.db import Database
 from app.llm import OllamaClient
+from app.memory_core import (
+    Consolidation,
+    adjust_confidence,
+    build_record,
+    decide_consolidation,
+    filter_dense_by_similarity,
+    is_temporally_current,
+    rerank,
+    rrf_fuse,
+    score_importance,
+)
 
 logger = logging.getLogger("companion.memory")
 
@@ -130,11 +141,18 @@ class MemoryStore:
         valid_from: str | None = None,
         valid_until: str | None = None,
         source: str | None = None,
+        user_asserted: bool = False,
+        entities_present: bool = False,
     ) -> int | None:
-        """Store one fact (with dedup). Returns the memory id, or None on error.
+        """Store one fact, consolidating it against what we already know.
 
-        If an existing memory is more similar than the dedup threshold, that
-        memory is updated in place and its id returned.
+        Returns the id of the memory that ended up holding this information —
+        a new row for ADD/SUPERSEDE, or the existing row for REINFORCE/UPDATE.
+        Returns None if nothing was stored.
+
+        `user_asserted` marks facts the user stated directly (as opposed to
+        inferred), which pins confidence high so corrections take effect on the
+        next turn rather than several turns later.
         """
         fact = fact.strip()
         if not fact:
@@ -159,30 +177,60 @@ class MemoryStore:
             logger.warning("Embedding failed for fact %r: %s", fact, e)
             return None
 
-        # --- Deduplicate against the nearest existing memory ---
-        existing_id = self._nearest_duplicate(embedding)
-        if existing_id is not None:
-            self.db.update_memory(
-                existing_id,
-                fact,
-                category,
-                kind=kind,
-                event_datetime=event_datetime,
-                recurrence_rule=recurrence_rule,
-                valid_from=valid_from,
-                valid_until=valid_until,
-                source=source,
+        # --- Consolidate against the nearest existing memories ---
+        # Replaces the old "nearest neighbour above threshold => overwrite it"
+        # behaviour, which conflated duplication with contradiction and
+        # destroyed the previous fact whenever the user corrected something.
+        candidates = self._nearest_candidates(embedding, n=5)
+        result = decide_consolidation(fact, candidates, user_asserted=user_asserted)
+        importance = score_importance(
+            fact, category, kind or "permanent", has_entities=bool(entities_present)
+        )
+
+        if result.decision is Consolidation.NOOP:
+            return None
+
+        if result.decision is Consolidation.REINFORCE and result.target_id:
+            target = next(
+                (r for r, _ in candidates if r.id == result.target_id), None)
+            new_conf = adjust_confidence(
+                target.confidence if target else 0.7,
+                reinforced=True, user_asserted=user_asserted,
             )
+            self.db.reinforce_memory(result.target_id, new_conf)
+            self.db.set_memory_scores(
+                result.target_id,
+                importance=max(importance,
+                               target.importance if target else importance),
+            )
+            logger.info("Reinforced memory #%s (%s): %r",
+                        result.target_id, result.reason, fact)
+            return result.target_id
+
+        if result.decision is Consolidation.UPDATE and result.target_id:
+            previous = self.db.get_memory(result.target_id)
+            self.db.update_memory(
+                result.target_id, result.merged_fact or fact, category,
+                kind=kind, event_datetime=event_datetime,
+                recurrence_rule=recurrence_rule, valid_from=valid_from,
+                valid_until=valid_until, source=source,
+            )
+            if previous:
+                self.db.record_revision(
+                    result.target_id, previous["fact"],
+                    result.merged_fact or fact, "update", result.reason,
+                )
+            self.db.set_memory_scores(result.target_id, importance=importance)
             self._collection.update(
-                ids=[str(existing_id)],
-                embeddings=[embedding],
-                documents=[fact],
+                ids=[str(result.target_id)], embeddings=[embedding],
+                documents=[result.merged_fact or fact],
                 metadatas=[{"category": category, "kind": kind or "permanent"}],
             )
-            logger.info("Updated existing memory #%s (dedup): %r", existing_id, fact)
-            return existing_id
+            logger.info("Updated memory #%s (%s): %r",
+                        result.target_id, result.reason, fact)
+            return result.target_id
 
-        # --- Otherwise insert a new memory ---
+        # ADD, or SUPERSEDE (which inserts the new fact, then retires the old).
         memory_id = self.db.add_memory(
             fact,
             category,
@@ -193,12 +241,25 @@ class MemoryStore:
             valid_until=valid_until,
             source=source,
         )
+        self.db.set_memory_scores(
+            memory_id,
+            importance=importance,
+            confidence=0.95 if user_asserted else 0.7,
+        )
         self._collection.add(
             ids=[str(memory_id)],
             embeddings=[embedding],
             documents=[fact],
             metadatas=[{"category": category}],
         )
+
+        if result.decision is Consolidation.SUPERSEDE and result.target_id:
+            # The old fact is retired, not deleted: it stays answerable for
+            # "where did I used to work" and recoverable if this was wrong.
+            self.db.supersede_memory(result.target_id, memory_id, result.reason)
+            self._drop_vector(result.target_id)
+            logger.info("Memory #%s superseded by #%s (%s)",
+                        result.target_id, memory_id, result.reason)
         logger.info("Stored new memory #%s [%s]: %r", memory_id, category, fact)
         # A freshly-stored dated event gets a care check-in scheduled around
         # it (see _schedule_event_followup) - read the row back since kind/
@@ -233,23 +294,46 @@ class MemoryStore:
             logger.warning("Event follow-up scheduling failed for memory #%s: %s",
                            memory_id, e)
 
-    def _nearest_duplicate(self, embedding: List[float]) -> int | None:
-        """Return the id of an existing memory within the dedup threshold, else None."""
+    def _nearest_candidates(self, embedding: List[float], n: int = 5):
+        """[(MemoryRecord, cosine_similarity)] for the n nearest memories.
+
+        Consolidation needs several neighbours rather than just the single
+        nearest one: the closest vector is not always the one a new fact
+        actually contradicts.
+        """
         if self._collection.count() == 0:
-            return None
-        res = self._collection.query(
-            query_embeddings=[embedding],
-            n_results=1,
-            include=["distances"],
-        )
+            return []
+        try:
+            res = self._collection.query(
+                query_embeddings=[embedding],
+                n_results=min(n, self._collection.count()),
+                include=["distances"],
+            )
+        except Exception as e:  # noqa: BLE001 - never let memory break the app
+            logger.warning("Candidate lookup failed: %s", e)
+            return []
         ids = res.get("ids", [[]])[0]
         distances = res.get("distances", [[]])[0]
         if not ids:
-            return None
-        similarity = 1.0 - float(distances[0])  # cosine space
-        if similarity >= self.dedup_threshold:
-            return int(ids[0])
-        return None
+            return []
+        rows = {r["id"]: r for r in self.db.get_memories_by_ids([int(i) for i in ids])}
+        out = []
+        for raw_id, dist in zip(ids, distances):
+            row = rows.get(int(raw_id))
+            if row:
+                out.append((build_record(row), 1.0 - float(dist)))  # cosine space
+        return out
+
+    def _drop_vector(self, memory_id: int) -> None:
+        """Remove a superseded memory from the ANN index.
+
+        The SQLite row stays for history; only its vector goes, so a retired
+        fact can never be retrieved into a prompt again.
+        """
+        try:
+            self._collection.delete(ids=[str(memory_id)])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to drop vector #%s: %s", memory_id, e)
 
     def sync_from_row(self, memory_id: int) -> None:
         """(Re)embed and index an existing SQLite memory row.
@@ -277,6 +361,25 @@ class MemoryStore:
             self._collection.delete(ids=[str(memory_id)])
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to delete vector #%s: %s", memory_id, e)
+
+    def wipe_all(self) -> int:
+        """Delete EVERY vector in this profile's collection (N10 'forget me',
+        paired with app.db.Database.delete_all_data - that clears the SQLite
+        rows, this clears the embeddings, since Chroma has no bulk 'delete
+        everything' call). Returns the number of vectors removed."""
+        try:
+            ids = self._collection.get(include=[])["ids"]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("wipe_all: failed to list vectors: %s", e)
+            return 0
+        if not ids:
+            return 0
+        try:
+            self._collection.delete(ids=ids)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("wipe_all: failed to delete %d vector(s): %s", len(ids), e)
+            return 0
+        return len(ids)
 
     # ------------------------------------------------------------------
     # Retrieval  (this is the hook wired into the system prompt)
@@ -400,48 +503,66 @@ class MemoryStore:
         """
         k = k or self.settings.memory_top_k
         start = time.perf_counter()
+        pool = max(k * 3, 20)  # over-fetch per channel; the reranker trims
 
-        ordered: List[tuple[int, str]] = []
-        seen: set[int] = set()
-
-        # --- Semantic top-k, gated by a relevance threshold ---
-        # Only inject memories that are actually related to what was said, so
-        # she doesn't bring up unrelated facts at random.
-        threshold = self.settings.memory_retrieval_threshold
+        # --- Channel 1: dense (vector) ---------------------------------
+        dense_ids: List[int] = []
         try:
             if self._collection.count() > 0:
                 # Hard cap on the embed call: when Ollama is busy with a
                 # background extraction, this can otherwise queue for seconds
-                # and stall the reply. Degrade to recent+graph facts instead.
+                # and stall the reply. Degrade to lexical+graph instead.
                 embedding = await asyncio.wait_for(self.llm.embed(query), timeout=2.5)
                 res = self._collection.query(
                     query_embeddings=[embedding],
-                    n_results=k,
+                    n_results=min(pool, self._collection.count()),
                     include=["distances"],
                 )
-                ids = res.get("ids", [[]])[0]
-                dists = res.get("distances", [[]])[0]
-                hit_ids = [
-                    int(mid)
-                    for mid, dist in zip(ids, dists)
-                    if (1.0 - float(dist)) >= threshold  # cosine space
-                ]
-                rows = {r["id"]: r for r in self.db.get_memories_by_ids(hit_ids)}
-                for mid_int in hit_ids:  # preserve similarity order
-                    row = rows.get(mid_int)
-                    if row and self._memory_is_current(row) and mid_int not in seen:
-                        seen.add(mid_int)
-                        ordered.append((mid_int, self._format_memory_for_prompt(row)))
+                raw_ids = [int(i) for i in res.get("ids", [[]])[0]]
+                raw_distances = res.get("distances", [[]])[0]
+                # An ANN index returns its k-nearest neighbours unconditionally
+                # - if nothing in the collection is actually relevant, it still
+                # hands back the least-irrelevant ones. Without this, the
+                # relative RELEVANCE_FLOOR in rerank() can never produce true
+                # abstention (the top candidate is always exactly 1.0 by
+                # construction). Confirmed with a live eval against real
+                # embeddings (HOST_VERIFICATION.md §3): "what is the capital
+                # of Peru" recalled unrelated stored facts until this landed.
+                dense_ids = filter_dense_by_similarity(
+                    list(zip(raw_ids, raw_distances)))
         except asyncio.TimeoutError:
-            logger.warning("Memory retrieval: embed timed out - semantic search skipped")
+            logger.warning("Memory retrieval: embed timed out - dense channel skipped")
         except Exception as e:  # noqa: BLE001 - retrieval must never break chat
-            logger.warning("Memory retrieval failed: %s", e)
+            logger.warning("Dense memory retrieval failed: %s", e)
 
-        # --- Include a few most-recent memories (freshly-learned context) ---
-        for row in self.db.get_recent_memories(self.settings.memory_recent_count):
-            if row["id"] not in seen and self._memory_is_current(row):
-                seen.add(row["id"])
-                ordered.append((row["id"], self._format_memory_for_prompt(row)))
+        # --- Channel 2: lexical (SQLite FTS5) --------------------------
+        # Catches exact tokens the embedding may rank poorly - names, places,
+        # and anything rare. Costs no model call, so it also keeps working
+        # when Ollama is busy and the dense channel above times out.
+        lexical_ids = self.db.search_memories_lexical(query, limit=pool)
+
+        # --- Fuse and rerank -------------------------------------------
+        fused = rrf_fuse(
+            {"dense": dense_ids, "lexical": lexical_ids},
+            weights={"dense": 1.0, "lexical": 0.7},
+        )
+        if not fused:
+            candidate_rows = []
+        else:
+            candidate_rows = self.db.get_memories_by_ids(list(fused.keys()))
+
+        records = [build_record(r) for r in candidate_rows]
+        records = [r for r in records if is_temporally_current(r)]
+
+        # The relevance floor inside rerank() is what replaced the old
+        # unconditional "always union the N most recent memories" step: recency
+        # is now a ranking signal, not a guaranteed ticket into the prompt.
+        ranked = rerank(records, fused, limit=k)
+
+        ordered: List[tuple[int, str]] = [
+            (r.id, self._format_memory_for_prompt(self._row_for(r)))
+            for r, _score in ranked
+        ]
 
         graph_facts = self.retrieve_graph_facts(query)
         if graph_facts:
@@ -453,13 +574,21 @@ class MemoryStore:
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         status = "ok" if elapsed_ms < 200 else "SLOW"
         logger.info(
-            "retrieve_memories: %d memories in %.1fms [%s]",
-            len(ordered),
-            elapsed_ms,
-            status,
+            "retrieve_memories: %d of %d candidates (dense=%d lexical=%d) in %.1fms [%s]",
+            len(ordered), len(records), len(dense_ids), len(lexical_ids),
+            elapsed_ms, status,
         )
 
         return [fact for _, fact in ordered]
+
+    def _row_for(self, record) -> Dict[str, Any]:
+        """Re-read a row for prompt formatting, falling back to the record."""
+        row = self.db.get_memory(record.id)
+        if row:
+            return row
+        return {"fact": record.fact, "kind": record.kind,
+                "event_datetime": record.event_datetime,
+                "recurrence_rule": None}
 
     # ------------------------------------------------------------------
     # Fact extraction (runs as a FastAPI BackgroundTask after each exchange)
