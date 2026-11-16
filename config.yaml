@@ -52,11 +52,13 @@ persona:
 # entirely to go back to plain single-persona mode.
 profiles:
   - id: main
-    number: "919876543210"     # your number
+    # Real number set via COMPANION_NUMBER_MAIN in .env (N10) - never commit
+    # a real number here, config.yaml is tracked in git.
+    number: "919876543210"     # placeholder; overridden by .env
     persona: luna              # -> personas/luna.yaml (she's called Nikki)
     default: true
   - id: friend
-    number: "919876543211"     # <-- CHANGE ME: your friend's number
+    number: "919876543211"     # placeholder; overridden by COMPANION_NUMBER_FRIEND in .env
     persona: aria              # Aria (see personas/aria.yaml)
 
 database:
@@ -195,6 +197,15 @@ whatsapp:
   # Session id used for WhatsApp + proactive messages. "main" is shared with
   # the web app so both surfaces show one continuous history.
   session_id: "main"
+
+# A real, dialable phone number (N9). Off by default - needs a Twilio
+# account + a publicly reachable webhook URL, neither of which a LAN-only
+# setup has out of the box. Credentials go in .env (TWILIO_ACCOUNT_SID,
+# TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER), never here. See
+# IMPLEMENTATION_LOG.md for the full go-live checklist.
+telephony:
+  enabled: false
+  provider: "twilio"
 
 server:
   host: "0.0.0.0"

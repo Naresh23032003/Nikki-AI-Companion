@@ -24,6 +24,7 @@ from app.db import Database
 from app.journal import (
     _is_negative_mood,
     run_recent_streak_check,
+    run_unresolved_check,
     run_weekly_patterns,
 )
 
@@ -135,6 +136,56 @@ class JournalPatternTests(unittest.TestCase):
         self._add(0, "sad", 4)
         stored = asyncio.run(run_weekly_patterns(self.db, self.memory))
         self.assertEqual(stored, 0)
+
+    # -- unresolved concerns (N6) --------------------------------------------
+    def test_a_concern_never_mentioned_again_is_flagged(self):
+        self._add(-7, "stressed", 4, why="said the client presentation was a disaster")
+        fired = asyncio.run(run_unresolved_check(self.db, self.memory))
+        self.assertTrue(fired)
+        fact = self.memory.facts[0][0]
+        self.assertTrue(fact.startswith("Unresolved:"), fact)
+        self.assertIn("presentation", fact)
+
+    def test_a_concern_mentioned_again_later_is_not_flagged(self):
+        self._add(-7, "stressed", 4, why="said the client presentation was a disaster")
+        self._add(-2, "content", 3, why="said the client presentation actually went fine")
+        fired = asyncio.run(run_unresolved_check(self.db, self.memory))
+        self.assertFalse(fired)
+
+    def test_too_recent_a_concern_is_not_flagged_yet(self):
+        """min_silent_days=3 by default - yesterday's stress hasn't gone
+        quiet long enough to call it unresolved."""
+        self._add(-1, "anxious", 4, why="said the interview felt rocky")
+        fired = asyncio.run(run_unresolved_check(self.db, self.memory))
+        self.assertFalse(fired)
+
+    def test_too_old_a_concern_is_not_flagged(self):
+        """max_age_days=14 by default - a month-old stressor is stale, not
+        something worth resurfacing out of nowhere."""
+        self._add(-30, "sad", 4, why="said the breakup was hitting hard this week")
+        fired = asyncio.run(run_unresolved_check(self.db, self.memory))
+        self.assertFalse(fired)
+
+    def test_positive_entries_never_flag(self):
+        self._add(-7, "excited", 4, why="said the new job offer looked amazing")
+        fired = asyncio.run(run_unresolved_check(self.db, self.memory))
+        self.assertFalse(fired)
+
+    def test_unresolved_does_not_stack(self):
+        self._add(-7, "stressed", 4, why="said the client presentation was a disaster")
+        self.assertTrue(asyncio.run(run_unresolved_check(self.db, self.memory)))
+        self._add(-6, "sad", 3, why="said the new apartment search fell through")
+        self.assertFalse(asyncio.run(run_unresolved_check(self.db, self.memory)))
+        flagged = [f for f, _ in self.memory.facts if f.startswith("Unresolved:")]
+        self.assertEqual(len(flagged), 1)
+
+    def test_highest_intensity_concern_wins_among_several(self):
+        self._add(-8, "worried", 2, why="said the car was making a weird noise")
+        self._add(-7, "scared", 5, why="said their grandmother was in the hospital")
+        fired = asyncio.run(run_unresolved_check(self.db, self.memory))
+        self.assertTrue(fired)
+        fact = self.memory.facts[0][0]
+        self.assertIn("hospital", fact)
 
 
 if __name__ == "__main__":

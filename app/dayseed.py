@@ -16,12 +16,24 @@ import logging
 import random
 from datetime import date, datetime
 
+from app.dayseed_core import (
+    ThreadState,
+    advance_thread,
+    compute_mood_trend,
+    select_thread_to_progress,
+    sync_threads,
+)
 from app.emotion import strip_tags
 
 logger = logging.getLogger("companion.dayseed")
 
 MOODS = ["great", "content", "lazy", "focused", "stressed", "tired", "playful", "soft"]
 
+# N5: the thread to progress and the friend roster are now DECIDED before
+# generation (least-recently-touched thread, real names) rather than left to
+# the model's free choice every call - see app/dayseed_core.py's module
+# docstring for why. {thread_focus} is either "no ongoing threads" or the one
+# chosen thread's text; the model reports progress on THAT thread specifically.
 _SEED_PROMPT = """\
 You generate a believable hidden "day state" for {name}, whose life is:
 {life}
@@ -29,18 +41,23 @@ You generate a believable hidden "day state" for {name}, whose life is:
 Yesterday's state (may be null): {yesterday}
 Today is {weekday}, {date_str}. Recurring today: {recurring}
 Relationship mood trend: {trend}
+Her friends, by name (use ONLY these if a friend appears in today's event -
+never invent a new person): {friend_names}
+The ONE thread to progress today: {thread_focus}
 
 Rules:
-- Threads progress REALISTICALLY from yesterday (never finish the same thing
-  twice; small steps).
+- Progress the named thread REALISTICALLY - one small step, not a finish,
+  unless it has genuinely concluded (then say so plainly).
 - Slots must fit her occupation/schedule and the weekday/weekend rhythm.
-- At most ONE small random event, involving her friends by name sometimes.
+- At most ONE small random event, involving her friends by name sometimes -
+  only names from the list above.
 
 Respond with STRICT JSON only:
 {{"mood": "one of {moods}", "energy": 1-5,
  "slots": {{"morning": "...", "afternoon": "...", "evening": "..."}},
  "on_mind": "one short thing occupying her thoughts",
- "thread_update": "one sentence of progress on one ongoing thread or null",
+ "thread_update": "one sentence of progress on the named thread, or null if there was none",
+ "thread_done": true or false,
  "random_event": "one small believable event or null"}}"""
 
 
@@ -83,12 +100,26 @@ class DayLife:
         now = datetime.now()
         weekday = now.strftime("%A")
         recurring = (life.get("recurring") or {}).get(weekday.lower(), "nothing specific")
-        trend = "steady"
+
+        # N5: real trend from two affection snapshots, not a hardcoded value.
+        trend = self._compute_trend()
+
+        # N5: decide WHICH thread to progress before generating, so the model
+        # reports on one specific storyline instead of freely (and
+        # incoherently) picking any of them each call.
+        threads = self._load_threads(life.get("ongoing_threads") or [])
+        focus = select_thread_to_progress(threads)
+        thread_focus_text = focus.text if focus else "no ongoing threads right now"
+        friend_names = [f.get("name", "") for f in (life.get("friends") or [])
+                        if isinstance(f, dict) and f.get("name")]
+
         prompt = _SEED_PROMPT.format(
             name=persona.name, life=json.dumps(life)[:2500],
             yesterday=json.dumps(yesterday) if yesterday else "null",
             weekday=weekday, date_str=now.strftime("%B %d"),
-            recurring=recurring, trend=trend, moods=", ".join(MOODS),
+            recurring=recurring, trend=trend,
+            friend_names=", ".join(friend_names) or "none named",
+            thread_focus=thread_focus_text, moods=", ".join(MOODS),
         )
         try:
             raw = await self.llm.chat(
@@ -108,7 +139,41 @@ class DayLife:
         except (TypeError, ValueError):
             state["energy"] = 3
         state["generated_at"] = datetime.now().isoformat()
+
+        if focus is not None:
+            self._save_threads(advance_thread(
+                threads, focus.text, done=bool(state.get("thread_done")), today=key))
         return state
+
+    # -- N5: thread-state + trend persistence (thin I/O around dayseed_core) ----
+
+    def _load_threads(self, thread_texts: list[str]) -> list[ThreadState]:
+        try:
+            raw = json.loads(self.db.get_setting("life_threads") or "[]")
+            existing = [ThreadState.from_dict(d) for d in raw]
+        except Exception as e:  # noqa: BLE001 - never block generation over this
+            logger.warning("life_threads state unreadable, resetting: %s", e)
+            existing = []
+        return sync_threads(existing, thread_texts)
+
+    def _save_threads(self, threads: list[ThreadState]) -> None:
+        try:
+            self.db.set_setting("life_threads",
+                                json.dumps([t.to_dict() for t in threads]))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("failed to persist life_threads: %s", e)
+
+    def _compute_trend(self) -> str:
+        try:
+            current = (self.db.get_relationship() or {}).get("affection")
+        except Exception:  # noqa: BLE001
+            current = None
+        previous_raw = self.db.get_setting("day_state_prev_affection")
+        previous = float(previous_raw) if previous_raw not in (None, "") else None
+        trend = compute_mood_trend(current, previous)
+        if current is not None:
+            self.db.set_setting("day_state_prev_affection", str(current))
+        return trend
 
     @staticmethod
     def _fallback(weekday: str, recurring: str) -> dict:
@@ -119,7 +184,7 @@ class DayLife:
                       "afternoon": f"work stuff - {recurring}",
                       "evening": "unwinding with a comfort show"},
             "on_mind": "the campaign deadline creeping closer",
-            "thread_update": None, "random_event": None,
+            "thread_update": None, "thread_done": False, "random_event": None,
         }
 
     async def regenerate(self) -> dict:

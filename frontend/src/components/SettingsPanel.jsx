@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import Avatar from './Avatar.jsx'
 import { api } from '../api.js'
+import { useEscapeToClose } from '../hooks/useEscapeToClose.js'
 
 export default function SettingsPanel({ persona, onClose, onPersonaChange, onClearChat, sourceFilter, onSourceFilterChange, onOpenJournal }) {
+  useEscapeToClose(onClose)
   const [personas, setPersonas] = useState([])
   const [activeId, setActiveId] = useState(persona?.id)
   const [memories, setMemories] = useState([])
@@ -117,12 +119,13 @@ export default function SettingsPanel({ persona, onClose, onPersonaChange, onCle
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title"
+        onClick={(e) => e.stopPropagation()}>
         <div className="sheet-head">
           <button className="icon-btn" onClick={onClose} aria-label="Back">
             <BackIcon />
           </button>
-          <h2>Settings</h2>
+          <h2 id="settings-title">Settings</h2>
         </div>
 
         <div className="sheet-body">

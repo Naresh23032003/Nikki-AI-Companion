@@ -89,11 +89,27 @@ class STTEngine:
             pass
         return "cpu", "int8"
 
-    def transcribe(self, audio_bytes: bytes, language: str | None = None) -> str:
+    def transcribe(self, audio_bytes: bytes, language: str | None = None,
+                   beam_size: int = 5) -> str:
         """Transcribe a webm/opus (or any ffmpeg-decodable) audio blob to text.
 
         This is CPU/GPU-bound and blocking; call it via asyncio.to_thread from
         async handlers.
+
+        `beam_size` (N8): 5 is faster-whisper's own default, tuned for
+        transcription QUALITY over speed - reasonable for the one-shot /stt
+        endpoint (voice notes, dictation), where there is no live turn-taking
+        waiting on the result. Call-mode (`_run_call_turn` in main.py) passes
+        beam_size=1 (greedy decoding) instead: every millisecond here is
+        silence before she starts replying, and short conversational
+        utterances lose little accuracy from beam search - the width mainly
+        helps long-form/technical dictation. Not live-benchmarked with a real
+        model in this session (Kokoro/faster-whisper model loading hung on
+        what looked like a blocked download in this sandbox - documented
+        rather than claiming a measurement that didn't complete); the
+        parameter is exposed and defaulted safely either way, and greedy vs
+        beam-5 being meaningfully faster for short audio is faster-whisper's
+        own documented/published behaviour, not a guess.
         """
         self._ensure_loaded()
         # faster-whisper accepts a binary file-like object; it decodes via PyAV,
@@ -101,7 +117,7 @@ class STTEngine:
         segments, _info = self._model.transcribe(
             io.BytesIO(audio_bytes),
             language=language,
-            beam_size=5,
+            beam_size=beam_size,
             vad_filter=True,  # drop silence/noise for cleaner short utterances
         )
         return "".join(seg.text for seg in segments).strip()

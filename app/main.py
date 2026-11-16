@@ -30,35 +30,69 @@ from __future__ import annotations
 import asyncio
 import base64
 import hmac
+import io
 import json
 import logging
-import mimetypes
 import random
 import re
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
-from datetime import datetime, time as dtime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import httpx
+import numpy as np
 from fastapi import (
     BackgroundTasks,
     FastAPI,
     File,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import ROOT, load_settings
+from app.conversation.bubbles import sentence_bubbles, split_bubbles
+from app.conversation.planner import (
+    TurnSignals,
+    plan_turn,
+    render as render_turn_plan,
+    summarise as summarise_turn_plan,
+)
+from app.conversation.tells import TurnContext, tell_names
+from app.conversation.notes import (
+    NoteContext,
+    awaiting_followup_note,
+    is_gibberish,
+    nonsense_note,
+    offer_note,
+    pattern_note,
+    persona_other_names,
+    streak_note,
+    track_offer_decline,
+    unresolved_note,
+)
 from app.dayseed import DayLife
 from app.db import Database
+from app.api import graph as graph_routes
+from app.api import history as history_routes
+from app.api import journal as journal_routes
+from app.api import memories as memories_routes
+from app.api import personas as personas_routes
+from app.api import privacy as privacy_routes
+from app.api import proactive as proactive_routes
+from app.api import relationship as relationship_routes
+from app.api import status as status_routes
+from app.api import voice as voice_routes
+from app.api.voice import _training_progress
+from app.deps import P, _current_profile, db_for_session, persona_voice, state
+from app.timing import hhmm, in_quiet_hours, now_context, sse
 from app.guards import (
     CAPABILITY_MANIFEST,
     CLAIM_PATTERNS,
@@ -66,7 +100,6 @@ from app.guards import (
     REFUSAL_DEFLECT,
     REFUSAL_PATTERNS,
     STATUS_PATTERNS,
-    guard_stats,
     scan_assistant_speak,
     scan_forbidden_claims,
     scan_honeypots,
@@ -80,6 +113,7 @@ from app.gpu_queue import PRIORITY_VOICE_NOTE, GPUJobQueue
 from app.journal import (
     run_nightly_extraction,
     run_recent_streak_check,
+    run_unresolved_check,
     run_weekly_patterns,
 )
 from app.providers import BrainUnavailable, CloudBrain
@@ -95,12 +129,20 @@ from app.emotion import (
 )
 from app.llm import OllamaClient
 from app.commands import handle as handle_command, is_command, mood_note
-from app.memory import VALID_CATEGORIES, MemoryStore
+from app.memory import MemoryStore
 from app.persona import build_system_prompt, list_persona_ids, load_persona
 from app.profiles import Profile, ProfileRegistry, load_profiles
-from app.relationship import STAGES, RelationshipTracker
+from app.relationship import RelationshipTracker
 from app.stickers import STICKER_ROOT, ensure_dirs as ensure_sticker_dirs, pick_sticker
 from app.stt import STTEngine
+from app.telephony import (
+    TELEPHONY_SAMPLE_RATE,
+    TwilioStreamBuffer,
+    get_telephony_provider,
+    pcm16_to_ulaw,
+    resample_linear,
+    ulaw_to_pcm16,
+)
 from app.tts import SentenceAccumulator, TTSEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -149,13 +191,6 @@ class ChatRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
 
 
-class MemoryCreate(BaseModel):
-    fact: str = Field(..., min_length=1)
-    category: str = Field(default="personal_info")
-
-
-class ActivePersona(BaseModel):
-    id: str = Field(..., min_length=1)
 
 
 class TTSRequest(BaseModel):
@@ -168,50 +203,21 @@ class TTSRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # App state / lifespan
 # ---------------------------------------------------------------------------
-class AppState:
-    settings = None
-    persona = None
-    db: Database | None = None
-    llm: OllamaClient | None = None
-    memory: MemoryStore | None = None
-    stt: STTEngine | None = None
-    tts: TTSEngine | None = None
-    proactive = None  # ProactiveEngine
-    relationship: RelationshipTracker | None = None
-    brain: CloudBrain | None = None
-    router: Router | None = None
-    tools: ToolRunner | None = None
-    tool_ctx: ToolContext | None = None
-    daylife: DayLife | None = None
-    rvc: RVCConverter | None = None
-    studio: StudioTTS | None = None
-    covers: CoverPipeline | None = None
-    gpu_queue: GPUJobQueue | None = None
-    profiles: ProfileRegistry | None = None
 
 
-state = AppState()
 
 # The profile (persona + its isolated db/memory/relationship) this request
 # belongs to. WhatsApp sets it per incoming message from the sender's number;
 # everything else (web app, calls) leaves it unset and gets the default
 # profile, which IS state.db/state.persona - i.e. unchanged behavior.
-_current_profile: ContextVar[Profile | None] = ContextVar("current_profile", default=None)
 
 
-def P() -> Profile:
-    """The profile serving this request. Never None once startup has run."""
-    p = _current_profile.get()
-    if p is not None:
-        return p
-    return state.profiles.default if state.profiles else None
+# P(), state and AppState now live in app/deps.py (N2 phase 2) so route
+# modules can import them without a cycle back through main.
 
 
 def _persona_voice() -> str | None:
-    """The active persona's voice, or None to fall back to the default."""
-    p = P()
-    persona = p.persona if p else state.persona
-    return (persona.voice or None) if persona else None
+    return persona_voice()
 
 
 def _build_profiles(settings) -> ProfileRegistry:
@@ -364,6 +370,8 @@ async def lifespan(app: FastAPI):
             settings=settings,
             relationship=state.relationship,
             tools=state.tools,
+            session_id=state.profiles.default.session_id,
+            number=state.profiles.default.number or None,
         )
         state.proactive.covers = state.covers  # rare unprompted song drops
         state.proactive.start()
@@ -420,6 +428,7 @@ async def lifespan(app: FastAPI):
                     db=p.db, llm=state.llm, memory=p.memory,
                     get_persona=lambda p=p: p.persona, settings=settings,
                     relationship=p.relationship, tools=p.tools,
+                    session_id=p.session_id, number=p.number or None,
                 )
                 engine.covers = state.covers
                 engine.start()
@@ -473,6 +482,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# CRUD route groups extracted from this module (N2 phase 2). Included before
+# the static-file mounts below, which claim "/" and would otherwise shadow them.
+app.include_router(memories_routes.router)
+app.include_router(journal_routes.router)
+app.include_router(graph_routes.router)
+app.include_router(history_routes.router)
+app.include_router(personas_routes.router)
+app.include_router(privacy_routes.router)
+app.include_router(proactive_routes.router)
+app.include_router(relationship_routes.router)
+app.include_router(status_routes.router)
+app.include_router(voice_routes.router)
+
 
 # ---------------------------------------------------------------------------
 # LAN auth: the server binds 0.0.0.0 so phone/tablet PWAs can reach it, which
@@ -509,65 +531,12 @@ async def _lan_auth(request, call_next):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _persona_public(persona) -> dict:
-    return {
-        "id": persona.id,
-        "name": persona.name,
-        "age": persona.age,
-        "avatar_id": persona.avatar_id,
-        "relationship_context": persona.relationship_context,
-        # Cache-busted so a freshly uploaded photo shows immediately.
-        "photo_url": f"/personas/{persona.id}/photo",
-    }
-
-
-def _resolve_photo_path(persona_id: str) -> Path:
-    """Find the profile photo file for a persona.
-
-    Precedence: uploaded override (DB) -> YAML profile_pic -> default avatar.
-    """
-    override = state.db.get_setting(f"profile_pic:{persona_id}")
-    candidates = []
-    if override:
-        candidates.append(Path(override))
-    try:
-        p = load_persona(state.settings.persona_folder, persona_id)
-        if p.profile_pic:
-            candidates.append(Path(p.profile_pic))
-    except FileNotFoundError:
-        pass
-
-    for c in candidates:
-        path = c if c.is_absolute() else (ROOT / c)
-        if path.exists():
-            return path
-    return DEFAULT_AVATAR
-
-
-def _sse(data: str, event: str | None = None) -> str:
-    prefix = f"event: {event}\n" if event else ""
-    return f"{prefix}data: {data}\n\n"
-
-
-def _now_context() -> str:
-    """Human-readable local date+time for the system prompt, e.g.
-    'Saturday, July 11, 12:14 PM (afternoon)'. Weekday, date and time all
-    come from this ONE line - when the date lived in a different note the
-    model couldn't bind them and would get the weekday wrong."""
-    from datetime import datetime
-
-    now = datetime.now()
-    h = now.hour
-    tod = (
-        "the middle of the night" if h < 4 else
-        "early morning" if h < 7 else
-        "morning" if h < 12 else
-        "afternoon" if h < 17 else
-        "evening" if h < 21 else
-        "night"
-    )
-    return (f"{now.strftime('%A')}, {now.strftime('%B')} {now.day}, "
-            f"{now.strftime('%I:%M %p').lstrip('0')} ({tod})")
+# Extracted to app/timing.py (N2). Kept as module-level names so existing call
+# sites are unchanged; only _in_quiet_hours needs a wrapper, to read the
+# configured window out of app state rather than reaching for it internally.
+_sse = sse
+_now_context = now_context
+_hhmm = hhmm
 
 
 def _in_quiet_hours(now: datetime | None = None) -> bool:
@@ -575,21 +544,7 @@ def _in_quiet_hours(now: datetime | None = None) -> bool:
     hold self-initiated deliveries (reminders, deferred answers, event
     follow-ups) until it's over instead of firing at 3am; the item stays
     queued and fires on the next scheduler tick after the window ends."""
-    beh = state.settings.behavior or {}
-    raw = (beh.get("quiet_hours") or "").strip()
-    if not raw:
-        return False
-    try:
-        s, e = raw.split("-", 1)
-        sh, sm = (int(x) for x in s.strip().split(":"))
-        eh, em = (int(x) for x in e.strip().split(":"))
-    except (ValueError, AttributeError):
-        return False
-    start, end = dtime(sh, sm), dtime(eh, em)
-    t = (now or datetime.now()).time()
-    if start <= end:
-        return start <= t <= end
-    return t >= start or t <= end  # window crossing midnight
+    return in_quiet_hours((state.settings.behavior or {}).get("quiet_hours"), now)
 
 
 # Fire-and-forget background tasks must be referenced or Python may GC them
@@ -751,30 +706,96 @@ async def _build_prompt(session_id: str, query: str, tool_note: str | None = Non
         day_note = await state.daylife.prompt_note()
     except Exception as e:  # noqa: BLE001
         logger.warning("day note failed: %s", e)
+    # N3: decide the SHAPE of this turn (length, ask-or-not, self-disclosure,
+    # memory surfacing, disagreement) before generation, as ONE coherent
+    # directive - rather than each heuristic note below silently competing to
+    # steer the same decision. The notes still contribute situational content
+    # (offers, patterns, streaks); the planner decides the turn's shape and
+    # folds them in as supporting lines via render()'s extra_notes.
+    turn_directive = _turn_directive(session_id, query, memories, mode)
     system_prompt = build_system_prompt(
         state.persona, memories, mode=mode,
         current_time=_now_context(),
         extra_notes=_relationship_notes(CAPABILITY_MANIFEST, day_note,
+                                        turn_directive,
                                         _offer_note(query), _pattern_note(query),
-                                        _streak_note(query), tool_note, extra_note),
+                                        _streak_note(query), _unresolved_note(query),
+                                        tool_note, extra_note),
         stage=_stage(),
     )
     return [{"role": "system", "content": system_prompt},
             *_sanitized_recent(session_id)]
 
 
-def _awaiting_followup_note(session_id: str) -> str | None:
-    """If she's waiting on an answer to an event check-in ('how did it go?'),
-    resolve it now - the NEXT user message is treated as the answer (see
-    app/db.py get_awaiting_followup's docstring for the intended design) -
-    and tell her this reply is likely that answer so she doesn't re-ask."""
-    awaiting = P().db.get_awaiting_followup(session_id)
-    if not awaiting:
+def _recent_assistant_replies(session_id: str, limit: int = 4) -> list[str]:
+    """Her own last few replies - the planner and tell-detector need these to
+    avoid repeating the same conversational move (asking a question every
+    single turn, or restating the same content twice in a row)."""
+    try:
+        history = _sanitized_recent(session_id)
+    except Exception as e:  # noqa: BLE001 - never break a reply over this
+        logger.warning("turn planner: history unavailable: %s", e)
+        return []
+    return [m.get("content", "") for m in history
+            if m.get("role") == "assistant"][-limit:]
+
+
+def _turn_directive(session_id: str, query: str, memories: list | None,
+                    mode: str) -> str | None:
+    """Plan this turn and render it. Returns None if planning fails.
+
+    Never allowed to raise: a planning failure must degrade to the previous
+    behaviour (persona prompt + notes only), not lose the user's message.
+    """
+    try:
+        db = P().db
+        signals = TurnSignals(
+            user_message=query,
+            recent_replies=tuple(_recent_assistant_replies(session_id)),
+            turns_since_self_share=int(db.get_setting("turns_since_self_share") or 99),
+            turns_since_memory_surfaced=int(
+                db.get_setting("turns_since_memory_surfaced") or 99),
+            stage=_stage() or "close",
+            # The top-ranked memory only; the planner decides whether it is
+            # surfaced at all, which is what stops her reciting facts back.
+            relevant_memory=(memories[0] if memories else None),
+            rng=random,
+        )
+        plan = plan_turn(signals)
+
+        db.set_setting("turns_since_self_share",
+                       "0" if plan.share_self
+                       else str(signals.turns_since_self_share + 1))
+        db.set_setting("turns_since_memory_surfaced",
+                       "0" if plan.surface_memory
+                       else str(signals.turns_since_memory_surfaced + 1))
+
+        logger.info("%s reasons=%s", summarise_turn_plan(plan), "; ".join(plan.reasons))
+        return render_turn_plan(plan)
+    except Exception as e:  # noqa: BLE001 - degrade, never drop the turn
+        logger.warning("turn planning failed, falling back to notes only: %s", e)
         return None
-    P().db.resolve_event_followup(awaiting["id"])
-    return (f"NOTE: You recently asked them about '{awaiting['event_fact']}' - this "
-            f"message is likely their answer. React naturally to what they say now; "
-            f"don't ask again.")
+
+
+# ---------------------------------------------------------------------------
+# Prompt notes — logic lives in app/conversation/notes.py (N2 extraction).
+# These wrappers build a NoteContext from app state so every call site below
+# is unchanged. The notes themselves are now unit-tested; they were not before,
+# because they reached for P(), state.settings and the global RNG.
+# ---------------------------------------------------------------------------
+
+
+def _note_ctx() -> NoteContext:
+    return NoteContext(
+        db=P().db,
+        behavior=state.settings.behavior or {},
+        stage=_stage() or "stranger",
+        rng=random,
+    )
+
+
+def _awaiting_followup_note(session_id: str) -> str | None:
+    return awaiting_followup_note(_note_ctx(), session_id)
 
 
 async def _maybe_repair_note(message: str) -> str | None:
@@ -793,107 +814,23 @@ async def _maybe_repair_note(message: str) -> str | None:
 
 
 def _offer_note(message: str) -> str | None:
-    """Offer throttling: after a relevant MENTION she may offer an action -
-    rate-limited, stage-gated, and permanently dropped once declined."""
-    beh = state.settings.behavior or {}
-    eagerness = float(beh.get("eagerness", 0.2))
-    gap = int(beh.get("offer_min_gap", 6))
-    stage = _stage() or "stranger"
-    if stage in ("stranger", "acquaintance"):
-        return None
-    topics = {
-        "food": r"\b(hungry|starving|haven'?t eaten|no food|skip(ping)? (lunch|dinner))\b",
-        "weather": r"\b(so (hot|cold)|freezing|melting|raining|weather)\b",
-        "money": r"\b(broke|money'?s tight|expensive|overspent)\b",
-    }
-    topic = next((t for t, p in topics.items() if re.search(p, message, re.I)), None)
-    if not topic:
-        return None
-    try:
-        declined = set(json.loads(P().db.get_setting("declined_offers") or "[]"))
-    except json.JSONDecodeError:
-        declined = set()
-    if topic in declined:
-        return None
-    n = int(P().db.get_setting("exchange_count") or 0)
-    last = int(P().db.get_setting("last_offer_at") or -999)
-    if n - last < gap or random.random() > eagerness:
-        return None
-    P().db.set_setting("last_offer_at", str(n))
-    # _track_offer_decline() reads this back if the next message declines -
-    # without it, a decline always recorded the literal string "last"
-    # instead of the actual topic, so "permanently dropped once declined"
-    # silently never worked.
-    P().db.set_setting("last_offer_topic", topic)
-    return (f"They just mentioned something about {topic}. Respond like a person "
-            f"first (empathy/teasing/curiosity). You MAY casually offer to help "
-            f"with it mid-conversation if it feels natural - one soft offer, "
-            f"never as your opening line, and drop it instantly if declined.")
+    return offer_note(_note_ctx(), message)
 
 
 def _pattern_note(message: str) -> str | None:
-    """Occasional, throttled reference to a weekly-detected mood-journal
-    pattern (category="relationship" memories prefixed "Pattern: ") - the
-    girlfriend part of the journal: gentle noticing, never a report. Gated by
-    the same eagerness dial as _offer_note, but content-independent and much
-    rarer (patterns aren't tied to any one message)."""
-    stage = _stage() or "stranger"
-    if stage in ("stranger", "acquaintance"):
-        return None
-    beh = state.settings.behavior or {}
-    eagerness = float(beh.get("eagerness", 0.2))
-    gap = int(beh.get("offer_min_gap", 6)) * 4
-    # Cheap gate check BEFORE the DB query - this runs on every message but
-    # the roll usually says no, so querying memories first was pure waste.
-    n = int(P().db.get_setting("exchange_count") or 0)
-    last_n = int(P().db.get_setting("last_pattern_ref_at") or -999)
-    if n - last_n < gap or random.random() > eagerness * 0.4:
-        return None
-    patterns = [m for m in P().db.list_memories_by_category("relationship")
-               if (m.get("fact") or "").startswith("Pattern:")]
-    if not patterns:
-        return None
-    last_id = int(P().db.get_setting("last_pattern_ref_id") or 0)
-    candidate = next((p for p in patterns if p["id"] != last_id), patterns[0])
-    P().db.set_setting("last_pattern_ref_at", str(n))
-    P().db.set_setting("last_pattern_ref_id", str(candidate["id"]))
-    fact = candidate["fact"][len("Pattern:"):].strip()
-    return (f"NOTE: from quietly paying attention over time you've noticed this about "
-            f"them: {fact}. You MAY bring it up naturally if the moment fits - as one "
-            f"gentle, caring observation, never as a report/stats/list, never mentioning "
-            f"a 'journal' or that you track anything. Skip it entirely if it doesn't fit.")
+    return pattern_note(_note_ctx(), message)
 
 
 def _streak_note(message: str) -> str | None:
-    """A SHORT-TERM rough-streak flag (run_recent_streak_check, chained onto
-    the NIGHTLY job - distinct from the long-term weekly Pattern: system
-    above). Surfaces promptly: a short gap (not _pattern_note's *4 throttle),
-    since 'you've seemed off the last few days' is time-sensitive - bringing
-    it up two weeks late would feel odd. One-shot: consumed (deleted) the
-    moment it's used, unlike a genuine Pattern: which stays referenceable."""
-    stage = _stage() or "stranger"
-    if stage in ("stranger", "acquaintance"):
-        return None
-    beh = state.settings.behavior or {}
-    eagerness = float(beh.get("eagerness", 0.2))
-    gap = int(beh.get("offer_min_gap", 6))
-    n = int(P().db.get_setting("exchange_count") or 0)
-    last_n = int(P().db.get_setting("last_streak_ref_at") or -999)
-    if n - last_n < gap or random.random() > eagerness:
-        return None
-    streaks = [m for m in P().db.list_memories_by_category("relationship")
-              if (m.get("fact") or "").startswith("Streak:")]
-    if not streaks:
-        return None
-    candidate = streaks[0]
-    P().db.set_setting("last_streak_ref_at", str(n))
-    P().db.delete_memory(candidate["id"])
-    P().memory.remove(candidate["id"])
-    fact = candidate["fact"][len("Streak:"):].strip()
-    return (f"NOTE: you've quietly noticed this about how they've been the last few "
-            f"days: {fact}. Bring it up naturally as one gentle, caring check-in if "
-            f"the moment fits - never as a report, never mentioning a 'journal' or "
-            f"that you track anything. Skip it entirely if it doesn't fit right now.")
+    # on_consume drops the vector for the one-shot streak memory we just deleted.
+    return streak_note(_note_ctx(), message,
+                       on_consume=lambda mid: P().memory.remove(mid))
+
+
+def _unresolved_note(message: str) -> str | None:
+    # on_consume drops the vector for the one-shot unresolved memory we just deleted.
+    return unresolved_note(_note_ctx(), message,
+                           on_consume=lambda mid: P().memory.remove(mid))
 
 
 # ---------------------------------------------------------------------------
@@ -901,82 +838,37 @@ def _streak_note(message: str) -> str | None:
 # fake evening (invented plans, times, random memory fragments) because the
 # model had no signal the input was noise. A real person notices immediately.
 # ---------------------------------------------------------------------------
-_LETTERS = re.compile(r"[a-zA-Z]+")
 # Real texting tokens that survive collapsing but have no vowel (or are
 # single letters) - must never count as keyboard-mash.
-_SHORT_REAL = {"i", "u", "y", "k", "hm", "mhm", "ty", "np", "gm", "gn",
-               "idk", "tbh", "btw", "rn", "pls", "plz", "thx", "xd",
-               "shh", "psst", "tsk", "brb", "wtf", "smh", "fr", "ngl"}
 
 
 def _is_gibberish(text: str) -> bool:
-    """Keyboard-mash detector: no plausible word in the message. Pure
-    emoji/punctuation ('??', '😂😂') is a real signal, NOT gibberish.
-    Elongations ('noooo', 'hmmmm') collapse first so they read as words."""
-    t = text.strip().lower()
-    if not t or not re.search(r"[a-zA-Z]", t):
-        return False
-    for w in _LETTERS.findall(t):
-        w = re.sub(r"(.)\1{2,}", r"\1", w)  # nooo -> no, hmmm -> hm
-        if w in _SHORT_REAL or (len(w) >= 2 and set(w) & set("aeiou")):
-            return False
-    return True
+    return is_gibberish(text)
 
 
 def _nonsense_note(message: str) -> str | None:
-    """Track consecutive gibberish/identical messages and hand the model a
-    human way out. Returns a prompt note while a streak is active."""
-    norm = re.sub(r"\s+", " ", message.strip().lower())
-    last = P().db.get_setting("last_user_msg") or ""
-    P().db.set_setting("last_user_msg", norm)
-    gib = _is_gibberish(message)
-    repeat = bool(norm) and norm == last
-    streak = int(P().db.get_setting("nonsense_streak") or 0)
-    streak = streak + 1 if (gib or repeat) else 0
-    P().db.set_setting("nonsense_streak", str(streak))
-    if streak == 0:
-        return None
-    what = "keyboard-mash gibberish" if gib else "the exact same message again"
-    if streak >= 4:
-        return (
-            f"NOTE: they've now sent {what} {streak} times in a row. Stop playing "
-            "along like it means something: reply with ONE very short dry line "
-            "('ok you're clearly just mashing your keyboard 😂' / '...say something "
-            "real and i'll answer'). Do NOT invent any events, people, plans or "
-            "times. No questions.")
-    return (
-        f"NOTE: their message is just {what}. React like a real person would - "
-        "confused or teasing ('did your cat walk on your keyboard?'), one short "
-        "line. Do NOT treat it as meaningful, and do NOT invent plans, people, "
-        "times or topics to fill the silence.")
+    return nonsense_note(_note_ctx(), message)
 
 
 def _track_offer_decline(message: str) -> None:
-    """If she offered last turn and this reply is a decline, drop that topic."""
-    if int(P().db.get_setting("last_offer_at") or -1) != \
-       int(P().db.get_setting("exchange_count") or 0) - 1:
-        return
-    if re.match(r"^\s*(no+|nah|nope|don'?t|it'?s ok(ay)?|i'?m (fine|good))\b",
-                message.strip(), re.I):
-        try:
-            declined = set(json.loads(P().db.get_setting("declined_offers") or "[]"))
-        except json.JSONDecodeError:
-            declined = set()
-        declined.add(P().db.get_setting("last_offer_topic") or "last")
-        P().db.set_setting("declined_offers", json.dumps(sorted(declined)))
+    track_offer_decline(_note_ctx(), message)
 
 
 def _persona_other_names(persona) -> list[str]:
-    """Names of people from HER OWN backstory (life.friends) - never valid
-    names for the person she's actually texting. See scan_identity_confusion."""
-    friends = getattr(persona, "life", None) or {}
-    return [f.get("name", "") for f in (friends.get("friends") or [])
-            if isinstance(f, dict) and f.get("name")]
+    return persona_other_names(persona)
 
 
-async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str]:
+async def _guarded_reply(messages: list[dict], tool_ran: bool,
+                         session_id: str | None = None,
+                         user_message: str | None = None) -> tuple[str, str]:
     """Generate fully, run the guards, regenerate once on violation, then
     surgically fix anything left. Nothing reaches the user unvetted.
+
+    `session_id`/`user_message` are optional and enable the N3 AI-tell guard
+    (reflexive questioning, over-agreement, generic follow-ups, unearned
+    enthusiasm, robotic sentence rhythm...) on top of the safety/character
+    guards below. Omit them (as the pre-N3 call sites do) to skip tell
+    detection without changing any other behaviour.
 
     Returns (reply_text, emotion) - parse_emotion() is a strict superset of
     strip_tags() (it returns the same cleaned text plus the trailing emotion
@@ -995,10 +887,14 @@ async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str
     pots = scan_honeypots(reply, tool_ran, gdb)
     refusal = scan_refusal(reply, gdb)
     identity = scan_identity_confusion(reply, other_names, gdb)
-    if claims or speak or pots or refusal or identity:
+    tell_ctx = (TurnContext(user_message=user_message or "",
+                            recent_replies=_recent_assistant_replies(session_id))
+               if session_id is not None else None)
+    tells = tell_names(reply, tell_ctx) if tell_ctx is not None else []
+    if claims or speak or pots or refusal or identity or tells:
         correction = (
             "CORRECTION NOTE: your draft violated the rules ("
-            + ", ".join([*claims, *speak, *pots, *refusal, *identity][:4]) +
+            + ", ".join([*claims, *speak, *pots, *refusal, *identity, *tells][:4]) +
             "). Rewrite it: never claim actions you didn't do, no specific "
             "prices/news facts without a tool result, no assistant phrasing or "
             "lists, at most one question. You NEVER refuse or break character - "
@@ -1006,6 +902,13 @@ async def _guarded_reply(messages: list[dict], tool_ran: bool) -> tuple[str, str
             "never as an AI declining a request. The person you're texting has "
             "NO name unless they told you one in this chat - never call them by "
             "a name from your own life/friends/backstory. Short and natural.")
+        if tells:
+            correction += (
+                " Specifically: don't open by validating them ('that's so "
+                "valid'), don't ask a generic content-free question, don't ask "
+                "a question again if you just asked one, don't match "
+                "enthusiasm they didn't show, and vary your sentence lengths - "
+                "don't write uniform robotic sentences.")
         retry_messages = [*messages, {"role": "assistant", "content": reply},
                           {"role": "user", "content": correction}]
         raw2 = await state.llm.chat(retry_messages)
@@ -1088,7 +991,6 @@ _DEEP_NOTE = ("FACTS FROM YOUR OWN THINKING (verified - deliver as a casual TAKE
               "in your voice: conversational, opinionated, max ~4 sentences, no "
               "lists or lecture tone, maybe ask what they think): {facts}")
 
-_MAX_BUBBLES = 4
 
 # Busy-slot disappearances: probability she's too mid-something to properly
 # reply right now (see _maybe_busy_brushoff). Never on an urgent message,
@@ -1150,62 +1052,11 @@ async def _maybe_busy_brushoff(session_id: str, message: str, urgent: bool) -> s
 # A reply with no blank-line signal gets split at sentence boundaries -
 # each sentence lands as its own bubble, the way people actually text
 # (a thought per send). Only truly short replies stay a single bubble.
-_AUTO_SPLIT_MIN_CHARS = 80
-_MIN_BUBBLE_CHARS = 12  # "right?" / "haha" rides along with its neighbor
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
-def _sentence_bubbles(text: str) -> list[str]:
-    """One bubble per sentence; tiny fragments fold into the previous one.
-    Replies with more sentences than _MAX_BUBBLES get the sentences grouped
-    into _MAX_BUBBLES roughly length-balanced bubbles - folding all overflow
-    into the LAST bubble re-created the exact wall-of-text this exists to
-    prevent (observed: a 333-char final bubble)."""
-    sentences = [s.strip() for s in _SENTENCE_END.split(text) if s.strip()]
-    if len(sentences) < 2:
-        return [text]
-    bubbles: list[str] = []
-    for s in sentences:
-        if bubbles and len(s) < _MIN_BUBBLE_CHARS:
-            bubbles[-1] = f"{bubbles[-1]} {s}"
-        else:
-            bubbles.append(s)
-    if len(bubbles) <= _MAX_BUBBLES:
-        return bubbles
-    per_bubble = sum(len(b) for b in bubbles) / _MAX_BUBBLES
-    grouped, current = [], ""
-    for b in bubbles:
-        if (current and len(grouped) < _MAX_BUBBLES - 1
-                and len(current) + len(b) > per_bubble * 1.15):
-            grouped.append(current)
-            current = b
-        else:
-            current = f"{current} {b}".strip()
-    if current:
-        grouped.append(current)
-    return grouped
-
-
-def _split_bubbles(text: str) -> list[str]:
-    """Split a reply into separate text bubbles.
-
-    Primary signal: blank lines - what _BEHAVIOR_RULES tells her to use for
-    'texted twice' (a reaction, then the real thought). Small local models
-    rarely emit that signal though, so multi-sentence replies over ~80 chars
-    additionally get split one-sentence-per-bubble - a thought per send,
-    like real texting. Short replies stay one bubble."""
-    parts = [p.strip() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
-    if len(parts) <= 1:
-        cleaned = text.strip()
-        if not cleaned:
-            return []
-        if len(cleaned) >= _AUTO_SPLIT_MIN_CHARS:
-            return _sentence_bubbles(cleaned)
-        return [cleaned]
-    if len(parts) > _MAX_BUBBLES:
-        # Overflow folds into the last bubble rather than being dropped.
-        parts = parts[:_MAX_BUBBLES - 1] + [" ".join(parts[_MAX_BUBBLES - 1:])]
-    return parts
+# Extracted to app/conversation/bubbles.py (N2).
+_sentence_bubbles = sentence_bubbles
+_split_bubbles = split_bubbles
 
 
 @app.post("/chat")
@@ -1282,7 +1133,9 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
             n for n in (followup_note, repair_note, nonsense_note) if n) or None
         messages = await _build_prompt(req.session_id, req.message, tool_note,
                                        memories=memories, extra_note=extra_note)
-        holder["reply"], _ = await _guarded_reply(messages, holder["tool_ran"])
+        holder["reply"], _ = await _guarded_reply(
+            messages, holder["tool_ran"],
+            session_id=req.session_id, user_message=req.message)
 
     async def event_stream():
         try:
@@ -1653,13 +1506,7 @@ async def _deliver_due_followups() -> None:
         logger.info("event follow-up: check-in #%d delivered", f["id"])
 
 
-def _hhmm(s: str, default: str = "23:45") -> tuple[int, int]:
-    try:
-        h, m = (s or default).split(":")
-        return int(h), int(m)
-    except ValueError:
-        h, m = default.split(":")
-        return int(h), int(m)
+# _hhmm is bound above from app.timing (N2 extraction).
 
 
 async def _run_nightly_journal() -> None:
@@ -1681,6 +1528,12 @@ async def _run_nightly_journal() -> None:
         await run_recent_streak_check(state.db, state.memory, state.settings)
     except Exception:  # noqa: BLE001
         logger.exception("mood journal: streak check failed")
+    try:
+        # N6: the "unresolved" layer - a specific concern that was logged and
+        # never mentioned again, distinct from the streak/pattern aggregates.
+        await run_unresolved_check(state.db, state.memory, state.settings)
+    except Exception:  # noqa: BLE001
+        logger.exception("mood journal: unresolved check failed")
 
 
 async def _run_weekly_journal_patterns() -> None:
@@ -1717,7 +1570,8 @@ async def _deliver_deep_deferred(t: dict) -> None:
             "[You finally have the answer to something they asked earlier.] "
             "Deliver it now, opening naturally like 'OKAY so about that thing "
             "you asked-'. Short, in your voice.")})
-        text, _ = await _guarded_reply(messages, tool_ran=True)
+        text, _ = await _guarded_reply(messages, tool_ran=True,
+                                       session_id=t["session_id"], user_message=t["question"])
     except Exception:  # noqa: BLE001
         text = f"okay, about what you asked earlier - {facts[:300]}"
     await _deliver_message(t["session_id"], text)
@@ -1756,7 +1610,8 @@ async def _deliver_busy_return(t: dict) -> None:
             "can finally properly answer what they said before.] Reply to that "
             "now, opening naturally (e.g. 'okay I'm free now!' or 'sorry about "
             "that, ANYWAY-') - casual, in your voice.")})
-        text, _ = await _guarded_reply(messages, tool_ran)
+        text, _ = await _guarded_reply(messages, tool_ran,
+                                       session_id=t["session_id"], user_message=t["question"])
     except Exception as e:  # noqa: BLE001
         logger.warning("busy-return delivery failed: %s", e)
         text = "hey sorry, i got pulled away earlier! what were we talking about? 😅"
@@ -1766,261 +1621,55 @@ async def _deliver_busy_return(t: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Persona endpoints
+# Persona endpoints — extracted to app/api/personas.py (N2 phase 2, round 2)
 # ---------------------------------------------------------------------------
-@app.get("/persona")
-async def get_persona():
-    return _persona_public(state.persona)
-
-
-@app.get("/personas")
-async def list_personas():
-    ids = list_persona_ids(state.settings.persona_folder)
-    personas = []
-    for pid in ids:
-        try:
-            p = load_persona(state.settings.persona_folder, pid)
-            personas.append(_persona_public(p))
-        except Exception as e:  # noqa: BLE001 - skip malformed persona files
-            logger.warning("Skipping persona '%s': %s", pid, e)
-    return {"active": state.persona.id, "personas": personas}
-
-
-@app.post("/personas/active")
-async def set_active_persona(body: ActivePersona):
-    if body.id not in list_persona_ids(state.settings.persona_folder):
-        raise HTTPException(status_code=404, detail="Persona not found")
-    state.persona = load_persona(state.settings.persona_folder, body.id)
-    state.db.set_setting("active_persona", body.id)
-    if state.tool_ctx:
-        state.tool_ctx.persona = state.persona  # keep the draw tool's selfie appearance current
-    if state.memory:
-        state.memory.blocked_names = {state.persona.name.lower()}
-    logger.info("Switched active persona to '%s'", body.id)
-    return _persona_public(state.persona)
-
-
-@app.get("/personas/{persona_id}/photo")
-async def get_persona_photo(persona_id: str):
-    path = _resolve_photo_path(persona_id)
-    media_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-cache"})
-
-
-@app.post("/persona/photo")
-async def upload_persona_photo(file: UploadFile = File(...)):
-    """Set the active persona's profile photo (shared with the WhatsApp account)."""
-    persona_id = state.persona.id
-    ext = Path(file.filename or "").suffix.lower() or ".png"
-    # .svg deliberately excluded: it can carry <script>, and this file gets
-    # served same-origin - an uploaded SVG could read the auth token straight
-    # out of localStorage. The shipped default avatar (media/avatars/luna.svg)
-    # is a static asset, not user-uploaded, so it's unaffected.
-    if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
-        raise HTTPException(status_code=400, detail=f"Unsupported image type: {ext}")
-
-    AVATAR_DIR.mkdir(parents=True, exist_ok=True)
-    dest = AVATAR_DIR / f"{persona_id}_upload{ext}"
-    data = await file.read()
-    dest.write_bytes(data)
-
-    # Record the override; YAML profile_pic stays as the default fallback.
-    state.db.set_setting(f"profile_pic:{persona_id}", str(dest))
-    logger.info("Updated profile photo for '%s' -> %s", persona_id, dest.name)
-    return _persona_public(state.persona)
 
 
 # ---------------------------------------------------------------------------
 # Memory endpoints
 # ---------------------------------------------------------------------------
-@app.get("/memory-graph")
-async def memory_graph_page():
-    template = ROOT / "app" / "templates" / "memory_graph.html"
-    if not template.exists():
-        raise HTTPException(status_code=404, detail="Memory graph template not found")
-    return FileResponse(template)
 
 
-@app.get("/memory-graph/data")
-async def memory_graph_data():
-    entities = state.db.list_entities()
-    relations = state.db.list_relations(active_only=True)
-    memories = state.db.list_memories()
-
-    linked_memories: dict[int, list[dict]] = {int(e["id"]): [] for e in entities}
-    for memory in memories:
-        fact = memory.get("fact", "") or ""
-        for entity in entities:
-            entity_name = entity.get("name", "") or ""
-            if entity_name.lower() in fact.lower():
-                linked_memories[int(entity["id"])].append({
-                    "id": memory["id"],
-                    "fact": memory["fact"],
-                    "category": memory["category"],
-                })
-
-    return {
-        "entities": [
-            {
-                "id": int(entity["id"]),
-                "label": entity["name"],
-                "title": entity["name"],
-                "type": entity["type"],
-                "notes": entity.get("notes") or "",
-                "linked_memories": linked_memories[int(entity["id"])],
-            }
-            for entity in entities
-        ],
-        "relations": [
-            {
-                "id": int(relation["id"]),
-                "from": int(relation["source_id"]),
-                "to": int(relation["target_id"]),
-                "label": relation["relation"],
-                "confidence": relation.get("confidence", 0.5),
-            }
-            for relation in relations
-        ],
-    }
 
 
-@app.put("/memory-graph/entities/{entity_id}")
-async def update_memory_graph_entity(entity_id: int, body: dict):
-    name = (body.get("name") or "").strip()
-    entity_type = (body.get("type") or "thing").strip()
-    notes = (body.get("notes") or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-    updated = state.db.update_entity(entity_id, name=name, entity_type=entity_type, notes=notes)
-    if not updated:
-        raise HTTPException(status_code=404, detail="entity not found")
-    return state.db.get_entity(entity_id)
 
 
-@app.delete("/memory-graph/entities/{entity_id}")
-async def delete_memory_graph_entity(entity_id: int):
-    deleted = state.db.delete_entity(entity_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="entity not found")
-    return {"deleted": entity_id}
 
 
-@app.delete("/memory-graph/relations/{relation_id}")
-async def delete_memory_graph_relation(relation_id: int):
-    deleted = state.db.delete_relation(relation_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="relation not found")
-    return {"deleted": relation_id}
 
 
-@app.get("/memories")
-async def list_memories():
-    return {"memories": state.db.list_memories()}
 
 
-@app.post("/memories", status_code=201)
-async def create_memory(mem: MemoryCreate):
-    category = mem.category if mem.category in VALID_CATEGORIES else "personal_info"
-    memory_id = state.db.add_memory(mem.fact.strip(), category)
-    state.memory.sync_from_row(memory_id)
-    return state.db.get_memory(memory_id)
 
 
-@app.post("/memories/{memory_id}/complete")
-async def complete_memory(memory_id: int):
-    """Mark an event/plan memory completed: it stops being injected into
-    prompts (used by the ✓ button in Settings and future follow-up tools)."""
-    if not state.db.get_memory(memory_id):
-        raise HTTPException(status_code=404, detail="Memory not found")
-    state.db.complete_memory(memory_id)
-    state.db.mark_event_resolved_by_memory(memory_id)
-    return state.db.get_memory(memory_id)
 
 
-@app.delete("/memories/{memory_id}")
-async def delete_memory(memory_id: int):
-    if not state.db.delete_memory(memory_id):
-        raise HTTPException(status_code=404, detail="Memory not found")
-    state.memory.remove(memory_id)
-    return {"deleted": memory_id}
 
 
 # ---------------------------------------------------------------------------
 # Mood journal (passive, local-model-only - see app/journal.py)
 # ---------------------------------------------------------------------------
-class MoodEntryEdit(BaseModel):
-    mood_label: str | None = None
-    intensity: int | None = Field(default=None, ge=1, le=5)
-    why: str | None = None
 
 
-@app.get("/journal")
-async def list_journal(since: str | None = None, mood: str | None = None):
-    return {"entries": state.db.list_mood_entries(since_date=since, mood_filter=mood)}
 
 
-@app.put("/journal/{entry_id}")
-async def edit_journal_entry(entry_id: int, body: MoodEntryEdit):
-    """User corrections are final and feed back as a memory - a corrected
-    mood is a stronger, more durable signal than an inferred one."""
-    if not state.db.get_mood_entry(entry_id):
-        raise HTTPException(status_code=404, detail="Entry not found")
-    fields = {k: v for k, v in body.model_dump().items() if v is not None}
-    updated = state.db.update_mood_entry(entry_id, **fields)
-    if fields:
-        await state.memory.add_fact(
-            f"On {updated['date']}, the user corrected their mood journal - it "
-            f"was actually {updated['mood_label']} ({updated['why']}).",
-            "emotion", source="mood_journal_edit",
-        )
-    return updated
 
 
-@app.delete("/journal/{entry_id}")
-async def delete_journal_entry(entry_id: int):
-    if not state.db.delete_mood_entry(entry_id):
-        raise HTTPException(status_code=404, detail="Entry not found")
-    return {"deleted": entry_id}
 
 
-@app.post("/journal/run-now")
-async def journal_run_now(day_offset: int = 0):
-    """DEV: manually trigger nightly extraction (default: today so far, not
-    yesterday - for testing without waiting for the scheduled time)."""
-    count = await run_nightly_extraction(state.db, state.llm, state.settings, day_offset=day_offset)
-    return {"stored": count}
 
 
-@app.post("/journal/run-weekly-now")
-async def journal_run_weekly_now():
-    """DEV: manually trigger the weekly pattern-awareness pass."""
-    count = await run_weekly_patterns(state.db, state.memory, state.settings)
-    return {"stored": count}
 
 
 # ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
 def _db_for_session(session_id: str):
-    """Resolve which database a session_id actually lives in - each profile
-    has its OWN db file (see app/profiles.py), so these must not silently
-    fall through to the default profile's db when the session belongs to
-    someone else's profile."""
-    profile = state.profiles.by_session(session_id) if state.profiles else None
-    return profile.db if profile else state.db
+    return db_for_session(session_id)
 
 
-@app.get("/history/{session_id}")
-async def get_history(session_id: str):
-    db = _db_for_session(session_id)
-    return {"session_id": session_id, "messages": db.get_all_messages(session_id)}
 
 
-@app.delete("/history/{session_id}")
-async def clear_history(session_id: str):
-    db = _db_for_session(session_id)
-    removed = db.clear_session(session_id)
-    return {"session_id": session_id, "cleared": removed}
 
 
 # ---------------------------------------------------------------------------
@@ -2308,7 +1957,9 @@ async def _run_call_turn(ws: WebSocket, msg: dict, cancel: asyncio.Event):
             await ws.send_json({"type": "error", "message": "STT unavailable"})
             return
         audio = base64.b64decode(msg.get("audio", ""))
-        user_text = await asyncio.to_thread(state.stt.transcribe, audio)
+        # N8: greedy decoding (beam_size=1) in live call mode - every ms here
+        # is silence before she starts replying, see app/stt.py's docstring.
+        user_text = await asyncio.to_thread(state.stt.transcribe, audio, None, 1)
         await ws.send_json({"type": "stt", "text": user_text})
     else:
         user_text = (msg.get("text") or "").strip()
@@ -2341,7 +1992,8 @@ async def _run_call_turn(ws: WebSocket, msg: dict, cancel: asyncio.Event):
         # contradicted what she'd already texted an hour earlier.
         extra_notes=_relationship_notes(CAPABILITY_MANIFEST, day_note,
                                         _interruption_note(session_id), followup_note,
-                                        repair_note, _streak_note(user_text)),
+                                        repair_note, _streak_note(user_text),
+                                        _unresolved_note(user_text)),
         current_time=_now_context(),
         stage=_stage(),
     )
@@ -2531,6 +2183,136 @@ async def ws_call(ws: WebSocket):
     finally:
         if call_gpu_on:
             await _end_call_gpu()
+
+
+# ---------------------------------------------------------------------------
+# Telephony: a real, dialable phone number (N9). See app/telephony.py's
+# module docstring for the architecture. NOT LIVE-VERIFIED - needs a real
+# Twilio account, a purchased number, and a publicly reachable HTTPS/WSS
+# webhook URL (this app is LAN-only by design); see IMPLEMENTATION_LOG.md
+# for the exact remaining steps. Reuses the same turn pipeline as /ws/call
+# (_build_prompt + _guarded_reply + state.tts) rather than a parallel one.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/telephony/incoming-call")
+async def telephony_incoming_call(request: Request):
+    """Twilio webhook: verify the request actually came from Twilio, then
+    hand the call over to the media-stream WebSocket for the conversation."""
+    provider = get_telephony_provider(state.settings)
+    if not provider:
+        raise HTTPException(status_code=503, detail="telephony not configured")
+    form = await request.form()
+    params = {k: str(v) for k, v in form.items()}
+    signature = request.headers.get("X-Twilio-Signature")
+    url = str(request.url)
+    if not provider.verify_webhook_signature(url, params, signature):
+        logger.warning("telephony: rejected incoming-call webhook - bad signature")
+        raise HTTPException(status_code=403, detail="invalid signature")
+    stream_url = (
+        url.replace("https://", "wss://").replace("http://", "ws://")
+        .rsplit("/", 1)[0] + "/telephony/media-stream"
+    )
+    logger.info("telephony: incoming call, directing to %s", stream_url)
+    return Response(content=provider.answer_call_twiml(stream_url),
+                    media_type="application/xml")
+
+
+async def _handle_telephony_turn(ws: WebSocket, stream_sid: str, session_id: str,
+                                 audio_8k: np.ndarray) -> None:
+    """One telephony turn: STT -> the same prompt/guard pipeline /ws/call
+    uses -> TTS -> mu-law back to Twilio. Kept a plain function (not a class
+    method) so it's a single, greppable diff against _run_call_turn's shape."""
+    import soundfile as sf
+
+    buf = io.BytesIO()
+    sf.write(buf, audio_8k, TELEPHONY_SAMPLE_RATE, format="WAV")
+    try:
+        user_text = await asyncio.to_thread(state.stt.transcribe, buf.getvalue(), None, 1)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("telephony: STT failed: %s", e)
+        return
+    if not user_text.strip():
+        return
+
+    db = P().db if P() else state.db
+    db.ensure_session(session_id)
+    db.add_message(session_id, "user", user_text, source="telephony")
+    messages = await _build_prompt(session_id, user_text)
+    try:
+        reply, _emotion = await _guarded_reply(
+            messages, tool_ran=False, session_id=session_id, user_message=user_text)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("telephony: reply generation failed: %s", e)
+        return
+    db.add_message(session_id, "assistant", reply, source="telephony")
+
+    try:
+        result = await asyncio.to_thread(state.tts.synth, reply)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("telephony: TTS failed: %s", e)
+        return
+    # Her actual trained timbre, not raw Kokoro - same config flag and same
+    # fallback-to-raw-on-failure behaviour as _synth_and_send uses for
+    # browser Call mode (voice.call_voice: kokoro_rvc). Missed in the first
+    # pass of this file; a phone call must sound like her, same as a browser
+    # call does, not the stock Kokoro voice.
+    vcfg = (state.settings.raw or {}).get("voice", {})
+    if vcfg.get("call_voice") == "kokoro_rvc" and state.rvc and state.rvc.available:
+        try:
+            converted, _ms = await asyncio.to_thread(
+                state.rvc.convert, result.samples, result.sample_rate)
+            result.samples = converted
+        except Exception as e:  # noqa: BLE001 - raw voice beats a dead call
+            logger.warning("telephony: rvc conversion failed, using raw kokoro: %s", e)
+    samples_8k = resample_linear(result.samples, result.sample_rate, TELEPHONY_SAMPLE_RATE)
+    mulaw = pcm16_to_ulaw(samples_8k)
+    await ws.send_json({
+        "event": "media",
+        "streamSid": stream_sid,
+        "media": {"payload": base64.b64encode(mulaw).decode("ascii")},
+    })
+
+
+@app.websocket("/telephony/media-stream")
+async def telephony_media_stream(ws: WebSocket):
+    """Twilio Media Stream: continuous mu-law/8kHz audio frames, no discrete
+    "user finished talking" event - TwilioStreamBuffer decides when a turn
+    is ready. Twilio's own protocol: {"event":"start"|"media"|"stop", ...}."""
+    provider = get_telephony_provider(state.settings)
+    if not provider:
+        await ws.close(code=4404)
+        return
+    await ws.accept()
+    stream_sid: str | None = None
+    session_id: str | None = None
+    buf = TwilioStreamBuffer()
+    try:
+        while True:
+            msg = await ws.receive_json()
+            event = msg.get("event")
+            if event == "start":
+                start = msg.get("start") or {}
+                stream_sid = start.get("streamSid")
+                call_sid = start.get("callSid") or stream_sid or "unknown"
+                session_id = f"telephony-{call_sid}"
+                logger.info("telephony: call started (%s)", session_id)
+            elif event == "media" and stream_sid and session_id:
+                payload_b64 = (msg.get("media") or {}).get("payload", "")
+                try:
+                    mulaw = base64.b64decode(payload_b64)
+                except Exception:  # noqa: BLE001
+                    continue
+                buf.add_chunk(ulaw_to_pcm16(mulaw))
+                if buf.should_flush():
+                    await _handle_telephony_turn(ws, stream_sid, session_id, buf.flush())
+            elif event == "stop":
+                logger.info("telephony: call ended (%s)", session_id)
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.exception("telephony media-stream error: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -2810,14 +2592,15 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
         pass
     # Ask for the trailing emotion tag - it drives sticker choice, then gets
     # stripped before anything is stored or sent.
+    turn_directive = _turn_directive(session_id, combined, memories, "chat")
     system_prompt = build_system_prompt(
         profile.persona,
         memories,
         current_time=_now_context(),
         extra_notes=_relationship_notes(CAPABILITY_MANIFEST, day_note,
-                                        EMOTION_TAG_INSTRUCTION,
+                                        EMOTION_TAG_INSTRUCTION, turn_directive,
                                         _offer_note(combined), _pattern_note(combined),
-                                        _streak_note(combined),
+                                        _streak_note(combined), _unresolved_note(combined),
                                         tool_note, followup_note, repair_note,
                                         nonsense_note, mood_note(db)),
         stage=_stage(),
@@ -2835,7 +2618,8 @@ async def whatsapp_incoming(body: WhatsAppIncoming):
         # serially before the fallback would fire. 90s total is far beyond
         # any healthy generation.
         reply, emotion = await asyncio.wait_for(
-            _guarded_reply(messages, tool_ran), timeout=90.0)
+            _guarded_reply(messages, tool_ran, session_id=session_id,
+                           user_message=combined), timeout=90.0)
     except Exception:  # noqa: BLE001
         # NEVER 502 the bridge: a 502 means the bridge sends NOTHING and she
         # just ghosts them mid-conversation (observed during a GPU thrash:
@@ -3017,179 +2801,11 @@ async def whatsapp_call_rejected(body: WhatsAppCallRejected | None = None):
 
 
 # ---------------------------------------------------------------------------
-# Proactive messaging controls
+# Proactive / brain-status / voice-bench / voice-status / day-state /
+# relationship / health endpoints - extracted to app/api/{proactive,status,
+# voice,relationship}.py (N2 phase 2, round 2). _training_progress is still
+# used below by lifespan's studio.prefer_cpu, imported from app.api.voice.
 # ---------------------------------------------------------------------------
-class PauseBody(BaseModel):
-    hours: float = Field(..., ge=0, le=168)
-
-
-@app.post("/proactive/pause")
-async def proactive_pause(body: PauseBody):
-    if not state.proactive:
-        raise HTTPException(status_code=503, detail="Proactive scheduler not running")
-    until = state.proactive.pause_for(body.hours)
-    return {"paused_until": until}
-
-
-@app.get("/proactive/status")
-async def proactive_status():
-    if not state.proactive:
-        return {"enabled": False, "running": False}
-    return {"running": True, **state.proactive.status()}
-
-
-# ---------------------------------------------------------------------------
-# Brain status + her day (dev)
-# ---------------------------------------------------------------------------
-@app.get("/brain/status")
-async def brain_status():
-    return {
-        **(state.brain.status() if state.brain else {}),
-        "routing": state.router.stats() if state.router else {},
-        "guards": guard_stats(state.db),
-        "deferred": state.db.list_deferred(10),
-        "reminders_pending": state.db.list_reminders(pending_only=True),
-    }
-
-
-class BenchRequest(BaseModel):
-    emotions: list[str] = Field(default=["neutral", "happy", "sad"])
-
-
-@app.post("/voice/bench")
-async def voice_bench(body: BenchRequest):
-    """Consistency bench: same 3 sentences via studio clone AND kokoro(+rvc),
-    per emotion, so you can tune until it's one person everywhere."""
-    sentences = [
-        "hey, i was just thinking about you.",
-        "no way, tell me everything right now!",
-        "okay fine, you win this one... this time.",
-    ]
-    bench_dir = MEDIA_DIR / "bench"
-    bench_dir.mkdir(parents=True, exist_ok=True)
-    import soundfile as sf
-    out: dict = {"studio_available": bool(state.studio and state.studio.available),
-                 "rvc_available": bool(state.rvc and state.rvc.available),
-                 "renders": []}
-    vcfg = (state.settings.raw or {}).get("voice", {})
-    for emo in body.emotions:
-        for i, line in enumerate(sentences):
-            entry = {"emotion": emo, "line": i}
-            # Kokoro (+ optional RVC) - the call voice.
-            res = await asyncio.to_thread(state.tts.synth, line)
-            samples, sr = res.samples, res.sample_rate
-            if vcfg.get("call_voice") == "kokoro_rvc" and state.rvc.available:
-                samples, _ = await asyncio.to_thread(state.rvc.convert, samples, sr)
-            p = bench_dir / f"call_{emo}_{i}.wav"
-            sf.write(p, samples, sr)
-            entry["call_url"] = f"/media/bench/{p.name}"
-            # Studio clone - the voice-note voice.
-            if out["studio_available"]:
-                try:
-                    from app.gpu_queue import PRIORITY_BENCH
-                    fut = await state.gpu_queue.submit(
-                        f"bench_{emo}_{i}",
-                        lambda l=line, e=emo: asyncio.to_thread(
-                            state.studio.render, l, e),
-                        priority=PRIORITY_BENCH)
-                    s2, sr2 = await fut
-                    p2 = bench_dir / f"studio_{emo}_{i}.wav"
-                    sf.write(p2, s2, sr2)
-                    entry["studio_url"] = f"/media/bench/{p2.name}"
-                except Exception as e:  # noqa: BLE001
-                    entry["studio_error"] = str(e)
-            out["renders"].append(entry)
-    return out
-
-
-def _training_progress() -> dict | None:
-    """Tail rvc_training.log (UTF-16 from Tee-Object) for stage/epoch lines."""
-    log = ROOT / "rvc_training.log"
-    if not log.exists():
-        return None
-    try:
-        text = log.read_text(encoding="utf-16", errors="ignore")
-    except (UnicodeError, OSError):
-        try:
-            text = log.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            return None
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    stages = [l for l in lines if l.startswith("STAGE") or "COMPLETE" in l
-              or "EXPORTED" in l]
-    epochs = [l for l in lines if re.search(r"epoch[ =:]+\d+", l, re.I)]
-    return {
-        "last_stage": stages[-1] if stages else None,
-        "last_epoch_line": epochs[-1][:120] if epochs else None,
-        "done": any("TRAINING COMPLETE" in l for l in lines),
-        "failed": any("FAILED" in l for l in stages[-1:]) if stages else False,
-    }
-
-
-@app.get("/voice/status")
-async def voice_status():
-    vcfg = (state.settings.raw or {}).get("voice", {})
-    return {
-        "training": _training_progress(),
-        "call_voice": vcfg.get("call_voice", "kokoro_raw"),
-        "rvc_ready": bool(state.rvc and state.rvc.available),
-        "rvc_status": state.rvc.status_label() if state.rvc else "not trained",
-        "rvc_last_latency_ms": state.rvc.last_latency_ms if state.rvc else None,
-        "studio_engine": state.studio.engine_name if state.studio else None,
-        "studio_installed": bool(state.studio and state.studio.available),
-        "gpu_queue": state.gpu_queue.status() if state.gpu_queue else {},
-        "song_library": [s.get("title") for s in state.covers.library()]
-        if state.covers else [],
-        "inbox_pending": [p.name for p in state.covers.pending_inbox()]
-        if state.covers else [],
-    }
-
-
-@app.get("/day-state")
-async def day_state():
-    return await state.daylife.today()
-
-
-@app.post("/day-state/regenerate")
-async def day_state_regenerate():
-    """DEV: reroll today's hidden day state."""
-    return await state.daylife.regenerate()
-
-
-# ---------------------------------------------------------------------------
-# Relationship progression
-# ---------------------------------------------------------------------------
-class RelationshipOverride(BaseModel):
-    stage: str | None = None
-    affection: float | None = Field(default=None, ge=0, le=100)
-
-
-@app.get("/relationship")
-async def get_relationship():
-    return state.relationship.state()
-
-
-@app.post("/relationship/override")
-async def relationship_override(body: RelationshipOverride):
-    """DEV ONLY: force stage/affection for testing (exposed in Settings)."""
-    if body.stage is not None and body.stage not in STAGES:
-        raise HTTPException(status_code=400, detail=f"stage must be one of {STAGES}")
-    return state.relationship.override(stage=body.stage, affection=body.affection)
-
-
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
-@app.get("/health")
-async def health():
-    ollama_ok = False
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as c:
-            r = await c.get(f"{state.settings.ollama_base_url}/api/tags")
-            ollama_ok = r.status_code == 200
-    except httpx.HTTPError:
-        ollama_ok = False
-    return {"status": "ok", "ollama_reachable": ollama_ok}
 
 
 # ---------------------------------------------------------------------------
