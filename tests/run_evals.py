@@ -63,6 +63,7 @@ def main() -> int:
         ("config env", "tests.test_config_env"),
         ("journal patterns", "tests.test_journal_patterns"),
         ("fake ollama", "tests.test_fake_ollama"),
+        ("relationship", "tests.test_relationship"),
     ]:
         summary, ok = _run_unittests(mod)
         print(f"\n[{label}] {summary}")
